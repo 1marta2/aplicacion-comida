@@ -33,9 +33,9 @@ type ShoppingItem = {
   name: string;
   recipes: string[];
   category: string;
-  quantity?: number | null;
-  totalQuantity?: number | null;
-  unit?: string | null;
+  quantity: number | null;
+  totalQuantity: number | null;
+  unit: string | null;
   ingredientName?: string;
   owned?: boolean;
   pantryQuantity?: number | null;
