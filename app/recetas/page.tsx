@@ -1,10 +1,10 @@
+
 "use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { supabase } from "@/lib/supabase";
-
 import {
   baseRecipes,
   categories as recipeCategories,
@@ -19,1449 +19,1139 @@ const categories = [
   ...recipeCategories,
 ];
 
-type IngredientInput = {
-  name: string;
-  quantity: string;
-  unit: string;
+type SupabaseRecipeRow = {
+  id: number;
+  title: string;
+  description: string | null;
+  preparation_time: number | null;
+  difficulty: string | null;
+  servings: number | null;
+  instructions: string | null;
+  category_id: number | null;
+  created_at: string | null;
 };
 
-function parseIngredientText(
-  ingredient: string
-): IngredientInput {
-  const text = ingredient.trim();
+type ParsedIngredient = {
+  quantity: number | null;
+  unit: string | null;
+  name: string;
+};
 
-  if (!text) {
-    return {
-      name: "",
-      quantity: "",
-      unit: "",
-    };
-  }
+const categoryMap: Record<string, number> = {
+  Desayuno: 1,
+  Comida: 2,
+  Cena: 3,
+  Postres: 4,
+  Snacks: 5,
+  Ensaladas: 6,
+  Pasta: 7,
+  Arroces: 8,
+  Arroz: 8,
+  Carne: 9,
+  Carnes: 9,
+  Pescado: 10,
+  Pescados: 10,
+  Legumbres: 11,
+  Huevos: 12,
+  Otros: 12,
+};
 
-  const match = text.match(
-    /^(\d+(?:[.,]\d+)?(?:\/\d+)?)\s*([a-zA-ZáéíóúñÁÉÍÓÚÑ]+)?\s+(.*)$/
+const categoryNameById: Record<number, string> = {
+  1: "Desayuno",
+  2: "Comida",
+  3: "Cena",
+  4: "Postres",
+  5: "Snacks",
+  6: "Ensaladas",
+  7: "Pasta",
+  8: "Arroces",
+  9: "Carne",
+  10: "Pescado",
+  11: "Legumbres",
+  12: "Otros",
+};
+
+function normalizeText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function parseIngredientText(text: string): ParsedIngredient {
+  const cleanText = text.trim();
+
+  const match = cleanText.match(
+    /^(\d+(?:[.,]\d+)?(?:\/\d+)?)\s*(g|kg|ml|l|ud|uds|unidad|unidades|cda|cdas|cdta|cdtas)?\s+(.+)$/i
   );
 
   if (!match) {
     return {
-      name: text,
-      quantity: "",
-      unit: "",
+      quantity: null,
+      unit: null,
+      name: cleanText,
     };
   }
 
+  let quantity: number | null = null;
+  const rawQuantity = match[1].replace(",", ".");
+
+  if (rawQuantity.includes("/")) {
+    const [numerator, denominator] = rawQuantity
+      .split("/")
+      .map(Number);
+
+    if (
+      Number.isFinite(numerator) &&
+      Number.isFinite(denominator) &&
+      denominator !== 0
+    ) {
+      quantity = numerator / denominator;
+    }
+  } else {
+    const parsed = Number(rawQuantity);
+
+    if (Number.isFinite(parsed)) {
+      quantity = parsed;
+    }
+  }
+
+  let unit = match[2] || null;
+
+  if (unit) {
+    const normalizedUnit = unit.toLowerCase();
+
+    if (normalizedUnit === "uds") {
+      unit = "ud";
+    }
+
+    if (
+      normalizedUnit === "unidad" ||
+      normalizedUnit === "unidades"
+    ) {
+      unit = "ud";
+    }
+
+    if (normalizedUnit === "cdas") {
+      unit = "cda";
+    }
+
+    if (normalizedUnit === "cdtas") {
+      unit = "cdta";
+    }
+  }
+
   return {
-    quantity: match[1].replace(",", "."),
-    unit: match[2] || "",
-    name: match[3],
+    quantity,
+    unit,
+    name: match[3].trim(),
+  };
+}
+
+/**
+ * Crea una receta base en Supabase.
+ * Solo se llama cuando sabemos que esa receta todavía no existe.
+ */
+async function createBaseRecipeInSupabase(
+  recipe: Recipe,
+  userId: string
+): Promise<SupabaseRecipeRow | null> {
+  const categoryId = categoryMap[recipe.category] ?? 12;
+
+  const preparationTime = recipe.time
+    ? parseInt(String(recipe.time), 10)
+    : null;
+
+  const servings =
+    typeof recipe.servings === "number"
+      ? recipe.servings
+      : null;
+
+  const instructions =
+    Array.isArray(recipe.steps) && recipe.steps.length > 0
+      ? recipe.steps.join("\n")
+      : null;
+
+  const {
+    data: savedRecipe,
+    error: recipeError,
+  } = await supabase
+    .from("recipes")
+    .insert({
+      title: recipe.name,
+      description: recipe.description || null,
+      preparation_time: Number.isFinite(preparationTime)
+        ? preparationTime
+        : null,
+      difficulty: recipe.difficulty || null,
+      servings,
+      instructions,
+      category_id: categoryId,
+      user_id: userId,
+    })
+    .select(
+      "id,title,description,preparation_time,difficulty,servings,instructions,category_id,created_at"
+    )
+    .single();
+
+  if (recipeError || !savedRecipe) {
+    console.error(
+      `Error creando receta base "${recipe.name}" en Supabase:`,
+      recipeError
+    );
+
+    return null;
+  }
+
+  if (Array.isArray(recipe.ingredients)) {
+    for (const ingredientText of recipe.ingredients) {
+      const parsed = parseIngredientText(ingredientText);
+      const ingredientName = parsed.name.trim();
+
+      if (!ingredientName) {
+        continue;
+      }
+
+      let ingredientId: number | null = null;
+
+      const {
+        data: existingIngredient,
+        error: findIngredientError,
+      } = await supabase
+        .from("ingredients")
+        .select("id,name")
+        .ilike("name", ingredientName)
+        .limit(1)
+        .maybeSingle();
+
+      if (findIngredientError) {
+        console.error(
+          `Error buscando ingrediente "${ingredientName}":`,
+          findIngredientError
+        );
+      }
+
+      if (existingIngredient) {
+        ingredientId = existingIngredient.id;
+      } else {
+        const {
+          data: newIngredient,
+          error: createIngredientError,
+        } = await supabase
+          .from("ingredients")
+          .insert({
+            name: ingredientName,
+          })
+          .select("id,name")
+          .single();
+
+        if (createIngredientError || !newIngredient) {
+          console.error(
+            `Error creando ingrediente "${ingredientName}":`,
+            createIngredientError
+          );
+
+          continue;
+        }
+
+        ingredientId = newIngredient.id;
+      }
+
+      if (!ingredientId) {
+        continue;
+      }
+
+      const { error: relationError } = await supabase
+        .from("recipe_ingredients")
+        .insert({
+          recipe_id: savedRecipe.id,
+          ingredient_id: ingredientId,
+          display_name: ingredientName,
+          quantity: parsed.quantity,
+          unit: parsed.unit,
+        });
+
+      if (relationError) {
+        console.error(
+          `Error relacionando ingrediente "${ingredientName}" con "${recipe.name}":`,
+          relationError
+        );
+      }
+    }
+  }
+
+  return savedRecipe;
+}
+
+function supabaseRecipeToRecipe(
+  row: SupabaseRecipeRow
+): Recipe {
+  const category =
+    categoryNameById[row.category_id ?? 12] || "Otros";
+
+  const matchingBaseRecipe = baseRecipes.find(
+    (baseRecipe) =>
+      normalizeText(baseRecipe.name) === normalizeText(row.title)
+  );
+
+  return {
+    id: String(row.id),
+    name: row.title,
+    category,
+    time:
+      row.preparation_time !== null
+        ? `${row.preparation_time} min`
+        : matchingBaseRecipe?.time || "",
+    difficulty:
+      row.difficulty || matchingBaseRecipe?.difficulty || "Fácil",
+    emoji:
+      matchingBaseRecipe?.emoji ||
+      getCategoryStyle(category).emoji,
+    ingredients: matchingBaseRecipe?.ingredients || [],
+    steps: row.instructions
+      ? row.instructions
+          .split("\n")
+          .map((step) => step.trim())
+          .filter(Boolean)
+      : matchingBaseRecipe?.steps || [],
+    servings:
+      row.servings !== null
+        ? row.servings
+        : matchingBaseRecipe?.servings,
+    description:
+      row.description || matchingBaseRecipe?.description,
+    color: matchingBaseRecipe?.color,
+    source: matchingBaseRecipe?.source,
   };
 }
 
 export default function RecetasPage() {
-  const [recipes, setRecipes] =
-    useState<Recipe[]>(baseRecipes);
+  const [recipes, setRecipes] = useState<Recipe[]>(baseRecipes);
 
-  const [favorites, setFavorites] =
-    useState<string[]>([]);
-
+  const [selectedCategory, setSelectedCategory] = useState("Todas");
   const [search, setSearch] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const [selectedCategory, setSelectedCategory] =
-    useState("Todas");
-
-  const [showImport, setShowImport] =
-    useState(false);
-
-  const [showManualRecipe, setShowManualRecipe] =
-    useState(false);
-
-  const [instagramUrl, setInstagramUrl] =
-    useState("");
-
-  const [recipeText, setRecipeText] =
-    useState("");
-
-  const [showTextHelp, setShowTextHelp] =
-    useState(false);
-
-  const [loadingImport, setLoadingImport] =
-    useState(false);
-
-  const [importError, setImportError] =
-    useState("");
-
-  const [previewRecipe, setPreviewRecipe] =
-    useState<Recipe | null>(null);
-
-  const [ingredientInputs, setIngredientInputs] =
-    useState<IngredientInput[]>([]);
+  const [newRecipeName, setNewRecipeName] = useState("");
+  const [newRecipeCategory, setNewRecipeCategory] = useState("Comida");
+  const [newRecipeTime, setNewRecipeTime] = useState("");
+  const [newRecipeDifficulty, setNewRecipeDifficulty] = useState("Fácil");
+  const [newRecipeServings, setNewRecipeServings] = useState("");
+  const [newRecipeDescription, setNewRecipeDescription] = useState("");
+  const [newRecipeIngredients, setNewRecipeIngredients] = useState("");
+  const [newRecipeSteps, setNewRecipeSteps] = useState("");
 
   useEffect(() => {
-    loadAllRecipes();
+    async function loadAllRecipes() {
+      setLoading(true);
 
-    const savedFavorites =
-      localStorage.getItem("favorites");
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-    if (savedFavorites) {
-      try {
-        setFavorites(JSON.parse(savedFavorites));
-      } catch {
-        setFavorites([]);
+      if (userError || !user) {
+        console.error(
+          "No se ha podido obtener el usuario:",
+          userError
+        );
+
+        setRecipes(baseRecipes);
+        setLoading(false);
+        return;
       }
-    }
-  }, []);
 
-  async function loadAllRecipes() {
-    try {
-      const { data, error } = await supabase
+      /*
+       * Primero cargamos todas las recetas del usuario.
+       * Después comprobamos qué recetas base faltan.
+       */
+
+      const {
+        data: existingRows,
+        error: recipesError,
+      } = await supabase
         .from("recipes")
-        .select(`
-          id,
-          title,
-          description,
-          preparation_time,
-          servings,
-          instructions,
-          category_id,
-          created_at
-        `)
+        .select(
+          "id,title,description,preparation_time,difficulty,servings,instructions,category_id,created_at"
+        )
+        .eq("user_id", user.id)
         .order("created_at", {
           ascending: false,
         });
 
-      if (error) {
+      if (recipesError) {
         console.error(
           "Error cargando recetas desde Supabase:",
-          error
+          recipesError
         );
 
         setRecipes(baseRecipes);
+        setLoading(false);
         return;
       }
 
-      const categoryMap: Record<number, string> = {
-        1: "Desayuno",
-        2: "Comida",
-        3: "Cena",
-        4: "Postres",
-        5: "Snacks",
-        6: "Ensaladas",
-        7: "Pasta",
-        8: "Arroces",
-        9: "Carne",
-        10: "Pescado",
-        11: "Legumbres",
-        12: "Otros",
-      };
+      let currentRows: SupabaseRecipeRow[] = existingRows || [];
 
-      const supabaseRecipes: Recipe[] =
-        (data || []).map((recipe) => {
-          const category =
-            categoryMap[recipe.category_id] ||
-            "Otros";
+      /*
+       * Creamos un Set con los nombres que ya existen.
+       * El nombre se normaliza para evitar duplicados por
+       * diferencias entre mayúsculas y tildes.
+       */
 
-          const style =
-            getCategoryStyle(category);
+      const existingTitles = new Set<string>();
 
-          return {
-            id: String(recipe.id),
-            name: recipe.title,
-            category,
-            time:
-              recipe.preparation_time || "",
-            difficulty: "Fácil",
-            emoji: style.emoji,
-            ingredients: [],
-            steps: recipe.instructions
-              ? recipe.instructions
-                  .split("\n")
-                  .filter(Boolean)
-              : [],
-            servings:
-              recipe.servings || 2,
-            description:
-              recipe.description || "",
-            color: style.color,
-          };
-        });
-
-      setRecipes([
-        ...baseRecipes,
-        ...supabaseRecipes,
-      ]);
-    } catch (error) {
-      console.error(
-        "Error cargando las recetas:",
-        error
-      );
-
-      setRecipes(baseRecipes);
-    }
-  }
-
-  const filteredRecipes = useMemo(() => {
-    return recipes.filter((recipe) => {
-      const matchesSearch = recipe.name
-        .toLowerCase()
-        .includes(search.toLowerCase());
-
-      const matchesCategory =
-        selectedCategory === "Todas"
-          ? true
-          : selectedCategory ===
-            "❤️ Favoritas"
-          ? favorites.includes(recipe.id)
-          : recipe.category ===
-            selectedCategory;
-
-      return (
-        matchesSearch &&
-        matchesCategory
-      );
-    });
-  }, [
-    recipes,
-    search,
-    selectedCategory,
-    favorites,
-  ]);
-
-  function toggleFavorite(recipeId: string) {
-    const newFavorites =
-      favorites.includes(recipeId)
-        ? favorites.filter(
-            (id) => id !== recipeId
-          )
-        : [...favorites, recipeId];
-
-    setFavorites(newFavorites);
-
-    localStorage.setItem(
-      "favorites",
-      JSON.stringify(newFavorites)
-    );
-  }
-
-  function openManualRecipe() {
-    setPreviewRecipe({
-      id: createRecipeId("nueva-receta"),
-      name: "",
-      category: "Pasta",
-      time: "",
-      difficulty: "Fácil",
-      emoji: "🍝",
-      ingredients: [],
-      steps: [""],
-      servings: 2,
-      description: "",
-    });
-
-    setIngredientInputs([
-      {
-        name: "",
-        quantity: "",
-        unit: "",
-      },
-    ]);
-
-    setShowManualRecipe(true);
-    setImportError("");
-  }
-
-  async function handleImport() {
-    if (!instagramUrl.trim()) {
-      setImportError(
-        "Introduce un enlace de Instagram."
-      );
-      return;
-    }
-
-    setLoadingImport(true);
-    setImportError("");
-
-    try {
-      const response = await fetch(
-        "/api/import-recipe",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body: JSON.stringify({
-            url: instagramUrl.trim(),
-          }),
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data?.error ||
-            "No se ha podido importar la receta."
-        );
+      for (const row of currentRows) {
+        existingTitles.add(normalizeText(row.title));
       }
 
-      const recipe =
-        data.recipe as Recipe;
+      /*
+       * Añadimos únicamente las recetas base que realmente
+       * no existen todavía en Supabase.
+       */
 
-      const normalizedRecipe: Recipe = {
-        ...recipe,
-        ingredients:
-          Array.isArray(
-            recipe.ingredients
-          )
-            ? recipe.ingredients
-            : [],
-        steps:
-          Array.isArray(recipe.steps)
-            ? recipe.steps
-            : [""],
-        servings:
-          recipe.servings || 2,
-        description:
-          recipe.description || "",
-        difficulty:
-          recipe.difficulty || "Fácil",
-        emoji:
-          recipe.emoji || "🍝",
-      };
+      for (const baseRecipe of baseRecipes) {
+        const normalizedBaseName = normalizeText(baseRecipe.name);
 
-      setPreviewRecipe(
-        normalizedRecipe
-      );
-
-      const recipeIngredients =
-        Array.isArray(
-          normalizedRecipe.ingredients
-        )
-          ? normalizedRecipe.ingredients
-          : [];
-
-      setIngredientInputs(
-        recipeIngredients.map(
-          parseIngredientText
-        )
-      );
-    } catch (error) {
-      setImportError(
-        error instanceof Error
-          ? error.message
-          : "Ha ocurrido un error."
-      );
-    } finally {
-      setLoadingImport(false);
-    }
-  }
-
-  function handleCompleteWithHelp() {
-    if (!recipeText.trim()) {
-      setImportError(
-        "Escribe primero el texto de la receta."
-      );
-      return;
-    }
-
-    const lines = recipeText
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    const recipe: Recipe = {
-      id: createRecipeId(
-        "receta-importada"
-      ),
-      name:
-        lines[0] ||
-        "Receta importada",
-      category: "Pasta",
-      time: "",
-      difficulty: "Fácil",
-      emoji: "🍝",
-      ingredients: [],
-      steps: lines.slice(1),
-      servings: 2,
-      description: "",
-    };
-
-    setPreviewRecipe(recipe);
-
-    const recipeIngredients =
-      Array.isArray(recipe.ingredients)
-        ? recipe.ingredients
-        : [];
-
-    setIngredientInputs(
-      recipeIngredients.map(
-        parseIngredientText
-      )
-    );
-
-    setShowTextHelp(false);
-  }
-
-  function updateIngredient(
-    index: number,
-    field: keyof IngredientInput,
-    value: string
-  ) {
-    const updatedIngredients = [
-      ...ingredientInputs,
-    ];
-
-    updatedIngredients[index] = {
-      ...updatedIngredients[index],
-      [field]: value,
-    };
-
-    setIngredientInputs(
-      updatedIngredients
-    );
-  }
-
-  function deleteIngredient(
-    index: number
-  ) {
-    setIngredientInputs(
-      ingredientInputs.filter(
-        (_, ingredientIndex) =>
-          ingredientIndex !== index
-      )
-    );
-  }
-
-  function addIngredient() {
-    setIngredientInputs([
-      ...ingredientInputs,
-      {
-        name: "",
-        quantity: "",
-        unit: "",
-      },
-    ]);
-  }
-
-  function updateStep(
-    index: number,
-    value: string
-  ) {
-    if (!previewRecipe) return;
-
-    const updatedSteps = [
-      ...previewRecipe.steps,
-    ];
-
-    updatedSteps[index] = value;
-
-    setPreviewRecipe({
-      ...previewRecipe,
-      steps: updatedSteps,
-    });
-  }
-
-  function addStep() {
-    if (!previewRecipe) return;
-
-    setPreviewRecipe({
-      ...previewRecipe,
-      steps: [
-        ...previewRecipe.steps,
-        "",
-      ],
-    });
-  }
-
-  function deleteStep(index: number) {
-    if (!previewRecipe) return;
-
-    setPreviewRecipe({
-      ...previewRecipe,
-      steps:
-        previewRecipe.steps.filter(
-          (_, stepIndex) =>
-            stepIndex !== index
-        ),
-    });
-  }
-
-  async function saveImportedRecipe() {
-    if (!previewRecipe) return;
-
-    const categoryStyle =
-      getCategoryStyle(
-        previewRecipe.category
-      );
-
-    const validIngredients =
-      ingredientInputs.filter(
-        (ingredient) =>
-          ingredient.name.trim() !== ""
-      );
-
-    const ingredientsAsText =
-      validIngredients.map(
-        (ingredient) => {
-          return [
-            ingredient.quantity.trim(),
-            ingredient.unit.trim(),
-            ingredient.name.trim(),
-          ]
-            .filter(Boolean)
-            .join(" ");
-        }
-      );
-
-    const recipeToSave: Recipe = {
-      ...previewRecipe,
-      ingredients:
-        ingredientsAsText,
-      steps:
-        previewRecipe.steps.filter(
-          (step) =>
-            step.trim() !== ""
-        ),
-      color: categoryStyle.color,
-      emoji:
-        previewRecipe.emoji ||
-        categoryStyle.emoji,
-    };
-
-    try {
-      // -----------------------------------
-      // 1. GUARDAR LA RECETA
-      // -----------------------------------
-
-      const categoryMap: Record<
-        string,
-        number
-      > = {
-        Pasta: 7,
-        Arroces: 8,
-        Carne: 9,
-        Pescado: 10,
-        Legumbres: 11,
-        Ensaladas: 6,
-        Huevos: 12,
-      };
-
-      const categoryId =
-        categoryMap[
-          recipeToSave.category
-        ] || 12;
-
-      const {
-        data: savedRecipe,
-        error: recipeError,
-      } = await supabase
-        .from("recipes")
-        .insert({
-          title: recipeToSave.name,
-          description:
-            recipeToSave.description ||
-            null,
-          preparation_time:
-            recipeToSave.time || null,
-          servings:
-            recipeToSave.servings ||
-            null,
-          instructions:
-            recipeToSave.steps.join(
-              "\n"
-            ),
-          category_id: categoryId,
-          user_id: null,
-        })
-        .select()
-        .single();
-
-      if (recipeError) {
-        console.error(
-          "Error guardando receta:",
-          recipeError
-        );
-
-        setImportError(
-          `No se ha podido guardar la receta: ${recipeError.message}`
-        );
-
-        return;
-      }
-
-      console.log(
-        "Receta guardada:",
-        savedRecipe
-      );
-
-      // -----------------------------------
-      // 2. GUARDAR LOS INGREDIENTES
-      // -----------------------------------
-
-      for (const ingredient of validIngredients) {
-        const ingredientName =
-          ingredient.name.trim();
-
-        if (!ingredientName) {
+        if (existingTitles.has(normalizedBaseName)) {
           continue;
         }
 
-        const {
-          data: existingIngredient,
-          error:
-            searchIngredientError,
-        } = await supabase
-          .from("ingredients")
-          .select("id")
-          .ilike(
-            "name",
-            ingredientName
-          )
-          .limit(1)
-          .maybeSingle();
-
-        if (searchIngredientError) {
-          console.error(
-            "Error buscando ingrediente:",
-            searchIngredientError
-          );
-
-          setImportError(
-            `No se ha podido guardar el ingrediente "${ingredientName}": ${searchIngredientError.message}`
-          );
-
-          return;
-        }
-
-        let ingredientId: number;
-
-        if (existingIngredient) {
-          ingredientId =
-            existingIngredient.id;
-        } else {
-          const {
-            data: newIngredient,
-            error:
-              createIngredientError,
-          } = await supabase
-            .from("ingredients")
-            .insert({
-              name: ingredientName,
-            })
-            .select("id")
-            .single();
-
-          if (
-            createIngredientError
-          ) {
-            console.error(
-              "Error creando ingrediente:",
-              createIngredientError
-            );
-
-            setImportError(
-              `No se ha podido crear el ingrediente "${ingredientName}": ${createIngredientError.message}`
-            );
-
-            return;
-          }
-
-          ingredientId =
-            newIngredient.id;
-        }
-
-        // -----------------------------------
-        // 3. RELACIONAR INGREDIENTE Y RECETA
-        // -----------------------------------
-
-        const {
-          error: relationError,
-        } = await supabase
-          .from(
-            "recipe_ingredients"
-          )
-          .insert({
-            recipe_id:
-              savedRecipe.id,
-            ingredient_id:
-              ingredientId,
-            quantity:
-              ingredient.quantity.trim()
-                ? Number(
-                    ingredient.quantity.replace(
-                      ",",
-                      "."
-                    )
-                  )
-                : null,
-            unit:
-              ingredient.unit.trim() ||
-              null,
-          });
-
-        if (relationError) {
-          console.error(
-            "Error relacionando ingrediente:",
-            relationError
-          );
-
-          setImportError(
-            `No se ha podido relacionar el ingrediente "${ingredientName}": ${relationError.message}`
-          );
-
-          return;
-        }
-      }
-
-      // -----------------------------------
-      // 4. GUARDAR TAMBIÉN EN LOCALSTORAGE
-      // -----------------------------------
-
-      const savedRecipes =
-        localStorage.getItem(
-          "recipes"
+        const createdRecipe = await createBaseRecipeInSupabase(
+          baseRecipe,
+          user.id
         );
 
-      let currentRecipes: Recipe[] =
-        [];
-
-      if (savedRecipes) {
-        try {
-          const parsed =
-            JSON.parse(savedRecipes);
-
-          if (Array.isArray(parsed)) {
-            currentRecipes = parsed;
-          }
-        } catch {
-          currentRecipes = [];
+        if (createdRecipe) {
+          currentRows = [...currentRows, createdRecipe];
+          existingTitles.add(normalizedBaseName);
         }
       }
 
-      currentRecipes.push(
-        recipeToSave
+      const supabaseRecipes = currentRows.map(
+        supabaseRecipeToRecipe
       );
+
+      /*
+       * Evitamos mostrar dos recetas con el mismo nombre.
+       */
+
+      const mergedRecipes: Recipe[] = [];
+      const addedNames = new Set<string>();
+
+      for (const supabaseRecipe of supabaseRecipes) {
+        const normalizedName = normalizeText(supabaseRecipe.name);
+
+        if (!addedNames.has(normalizedName)) {
+          mergedRecipes.push(supabaseRecipe);
+          addedNames.add(normalizedName);
+        }
+      }
+
+      /*
+       * Si alguna receta base no está en Supabase, la mostramos
+       * igualmente como alternativa.
+       */
+
+      for (const baseRecipe of baseRecipes) {
+        const normalizedName = normalizeText(baseRecipe.name);
+
+        if (!addedNames.has(normalizedName)) {
+          mergedRecipes.push(baseRecipe);
+          addedNames.add(normalizedName);
+        }
+      }
+
+      setRecipes(mergedRecipes);
+      setLoading(false);
+    }
+
+    loadAllRecipes();
+  }, []);
+
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    function loadFavorites() {
+      try {
+        const stored = localStorage.getItem("favoriteRecipes");
+        const parsed = stored ? JSON.parse(stored) : [];
+
+        setFavoriteIds(
+          Array.isArray(parsed) ? parsed.map(String) : []
+        );
+      } catch (error) {
+        console.error("Error cargando favoritos:", error);
+        setFavoriteIds([]);
+      }
+    }
+
+    loadFavorites();
+
+    window.addEventListener("favoritesChanged", loadFavorites);
+    window.addEventListener("storage", loadFavorites);
+
+    return () => {
+      window.removeEventListener("favoritesChanged", loadFavorites);
+      window.removeEventListener("storage", loadFavorites);
+    };
+  }, []);
+
+  const filteredRecipes = useMemo(() => {
+    const normalizedSearch = normalizeText(search);
+
+    return recipes.filter((recipe) => {
+      const matchesCategory =
+        selectedCategory === "Todas"
+          ? true
+          : selectedCategory === "❤️ Favoritas"
+            ? favoriteIds.includes(String(recipe.id))
+            : recipe.category === selectedCategory;
+
+      const matchesSearch =
+        normalizedSearch === ""
+          ? true
+          : normalizeText(recipe.name).includes(normalizedSearch) ||
+            normalizeText(recipe.category).includes(normalizedSearch) ||
+            recipe.ingredients.some((ingredient) =>
+              normalizeText(ingredient).includes(normalizedSearch)
+            );
+
+      return matchesCategory && matchesSearch;
+    });
+  }, [recipes, selectedCategory, search, favoriteIds]);
+
+  function toggleFavorite(recipeId: string) {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const stored = localStorage.getItem("favoriteRecipes");
+
+      const currentFavorites: string[] = stored
+        ? JSON.parse(stored).map(String)
+        : [];
+
+      const normalizedId = String(recipeId);
+
+      const nextFavorites = currentFavorites.includes(normalizedId)
+        ? currentFavorites.filter((id) => id !== normalizedId)
+        : [...currentFavorites, normalizedId];
 
       localStorage.setItem(
-        "recipes",
-        JSON.stringify(
-          currentRecipes
-        )
+        "favoriteRecipes",
+        JSON.stringify(nextFavorites)
       );
 
-      setRecipes((prev) => [
-        ...prev,
-        recipeToSave,
-      ]);
+      window.dispatchEvent(new Event("favoritesChanged"));
 
-      // -----------------------------------
-      // 5. CERRAR FORMULARIO
-      // -----------------------------------
-
-      setPreviewRecipe(null);
-      setIngredientInputs([]);
-      setShowImport(false);
-      setShowManualRecipe(false);
-      setInstagramUrl("");
-      setRecipeText("");
-      setImportError("");
-
-      console.log(
-        "Receta e ingredientes guardados correctamente."
-      );
+      setRecipes((current) => [...current]);
     } catch (error) {
-      console.error(error);
-
-      setImportError(
-        "Ha ocurrido un error al guardar la receta."
-      );
+      console.error("Error guardando favorito:", error);
     }
   }
 
-  function closeImport() {
-    setShowImport(false);
-    setShowManualRecipe(false);
-    setPreviewRecipe(null);
-    setIngredientInputs([]);
-    setInstagramUrl("");
-    setRecipeText("");
-    setImportError("");
-    setShowTextHelp(false);
+  function isFavorite(recipeId: string) {
+    return favoriteIds.includes(String(recipeId));
+  }
+
+  async function saveImportedRecipe(recipeToSave: Recipe) {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      console.error("No hay usuario autenticado:", userError);
+      return;
+    }
+
+    /*
+     * Evitamos crear otra receta si ya existe una con
+     * el mismo nombre para este usuario.
+     */
+
+    const normalizedName = normalizeText(recipeToSave.name);
+
+    const {
+      data: existingRecipe,
+      error: existingRecipeError,
+    } = await supabase
+      .from("recipes")
+      .select(
+        "id,title,description,preparation_time,difficulty,servings,instructions,category_id,created_at"
+      )
+      .eq("user_id", user.id)
+      .ilike("title", recipeToSave.name.trim())
+      .limit(1)
+      .maybeSingle();
+
+    if (existingRecipeError) {
+      console.error(
+        "Error comprobando si la receta ya existe:",
+        existingRecipeError
+      );
+    }
+
+    if (
+      existingRecipe &&
+      normalizeText(existingRecipe.title) === normalizedName
+    ) {
+      console.warn(
+        `La receta "${recipeToSave.name}" ya existe en Supabase.`
+      );
+
+      const existingAsRecipe = supabaseRecipeToRecipe(existingRecipe);
+
+      setRecipes((current) => {
+        const alreadyShown = current.some(
+          (recipe) =>
+            String(recipe.id) === String(existingAsRecipe.id)
+        );
+
+        return alreadyShown
+          ? current
+          : [existingAsRecipe, ...current];
+      });
+
+      setShowCreate(false);
+      return;
+    }
+
+    const categoryId = categoryMap[recipeToSave.category] ?? 12;
+
+    const preparationTime = recipeToSave.time
+      ? parseInt(String(recipeToSave.time), 10)
+      : null;
+
+    const {
+      data: insertedRecipe,
+      error: recipeError,
+    } = await supabase
+      .from("recipes")
+      .insert({
+        title: recipeToSave.name,
+        description: recipeToSave.description || null,
+        preparation_time: Number.isFinite(preparationTime)
+          ? preparationTime
+          : null,
+        difficulty: recipeToSave.difficulty || null,
+        servings: recipeToSave.servings || null,
+        instructions: recipeToSave.steps.join("\n"),
+        category_id: categoryId,
+        user_id: user.id,
+      })
+      .select()
+      .single();
+
+    if (recipeError || !insertedRecipe) {
+      console.error(
+        "Error guardando receta en Supabase:",
+        recipeError
+      );
+      return;
+    }
+
+    for (const ingredientText of recipeToSave.ingredients) {
+      const parsed = parseIngredientText(ingredientText);
+      const ingredientName = parsed.name.trim();
+
+      if (!ingredientName) {
+        continue;
+      }
+
+      let ingredientId: number | null = null;
+
+      const {
+        data: existingIngredient,
+        error: findIngredientError,
+      } = await supabase
+        .from("ingredients")
+        .select("id,name")
+        .ilike("name", ingredientName)
+        .limit(1)
+        .maybeSingle();
+
+      if (findIngredientError) {
+        console.error(
+          "Error buscando ingrediente:",
+          findIngredientError
+        );
+      }
+
+      if (existingIngredient) {
+        ingredientId = existingIngredient.id;
+      } else {
+        const {
+          data: newIngredient,
+          error: createIngredientError,
+        } = await supabase
+          .from("ingredients")
+          .insert({
+            name: ingredientName,
+          })
+          .select("id,name")
+          .single();
+
+        if (createIngredientError || !newIngredient) {
+          console.error(
+            "Error creando ingrediente:",
+            createIngredientError
+          );
+          continue;
+        }
+
+        ingredientId = newIngredient.id;
+      }
+
+      if (!ingredientId) {
+        continue;
+      }
+
+      const { error: relationError } = await supabase
+        .from("recipe_ingredients")
+        .insert({
+          recipe_id: insertedRecipe.id,
+          ingredient_id: ingredientId,
+          display_name: ingredientName,
+          quantity: parsed.quantity,
+          unit: parsed.unit,
+        });
+
+      if (relationError) {
+        console.error(
+          "Error relacionando ingrediente:",
+          relationError
+        );
+      }
+    }
+
+    try {
+      const storedRecipes = localStorage.getItem("recipes");
+
+      const currentLocalRecipes: Recipe[] = storedRecipes
+        ? JSON.parse(storedRecipes)
+        : [];
+
+      localStorage.setItem(
+        "recipes",
+        JSON.stringify([
+          ...currentLocalRecipes,
+          {
+            ...recipeToSave,
+            id: String(insertedRecipe.id),
+          },
+        ])
+      );
+    } catch (error) {
+      console.error("Error guardando copia local:", error);
+    }
+
+    setRecipes((current) => {
+      const newRecipe: Recipe = {
+        ...recipeToSave,
+        id: String(insertedRecipe.id),
+      };
+
+      return [newRecipe, ...current];
+    });
+
+    setShowCreate(false);
+    setNewRecipeName("");
+    setNewRecipeCategory("Comida");
+    setNewRecipeTime("");
+    setNewRecipeDifficulty("Fácil");
+    setNewRecipeServings("");
+    setNewRecipeDescription("");
+    setNewRecipeIngredients("");
+    setNewRecipeSteps("");
+  }
+
+  async function handleCreateRecipe() {
+    const name = newRecipeName.trim();
+
+    if (!name) {
+      return;
+    }
+
+    const ingredients = newRecipeIngredients
+      .split("\n")
+      .map((ingredient) => ingredient.trim())
+      .filter(Boolean);
+
+    const steps = newRecipeSteps
+      .split("\n")
+      .map((step) => step.trim())
+      .filter(Boolean);
+
+    const recipe: Recipe = {
+      id: createRecipeId("nueva-receta"),
+      name,
+      category: newRecipeCategory,
+      time: newRecipeTime.trim(),
+      difficulty: newRecipeDifficulty,
+      emoji: getCategoryStyle(newRecipeCategory).emoji,
+      ingredients,
+      steps,
+      servings:
+        newRecipeServings.trim() !== ""
+          ? Number(newRecipeServings)
+          : undefined,
+      description: newRecipeDescription.trim() || undefined,
+    };
+
+    await saveImportedRecipe(recipe);
   }
 
   return (
-    <main className="min-h-screen bg-[#F7F4EE]">
-      <div className="mx-auto max-w-7xl px-6 py-8">
-
+    <main className="min-h-screen bg-[#F7F5EF] px-3 pb-28 pt-5 text-[#26352D] sm:px-4 sm:pt-6">
+      <div className="mx-auto w-full max-w-5xl">
         {/* CABECERA */}
-        <div className="mb-8 flex items-center justify-between">
-          <div>
-            <Link
-              href="/"
-              className="mb-3 inline-block text-sm text-gray-500 hover:text-gray-800"
-            >
-              ← Volver
-            </Link>
+        <div className="mb-5 flex items-start justify-between gap-3 sm:mb-6 sm:gap-4">
+          <div className="min-w-0">
+            <p className="mb-1 text-xs font-medium text-[#52685A] sm:text-sm">
+              Mi cocina
+            </p>
 
-            <h1 className="text-4xl font-bold text-gray-900">
-              Mis recetas
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              Recetas
             </h1>
 
-            <p className="mt-2 text-gray-500">
-              Guarda y organiza tus recetas favoritas
+            <p className="mt-1 text-xs text-[#6B756E] sm:text-sm">
+              Tus recetas, todas en un mismo sitio
             </p>
           </div>
 
           <button
-            onClick={openManualRecipe}
-            className="rounded-2xl bg-gray-900 px-5 py-3 font-medium text-white shadow-sm transition hover:bg-gray-800"
+            type="button"
+            onClick={() => setShowCreate(true)}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#52685A] text-2xl text-white shadow-sm transition hover:opacity-90 sm:h-11 sm:w-11"
+            aria-label="Crear receta"
           >
-            + Añadir receta
+            +
           </button>
         </div>
 
         {/* BUSCADOR */}
-        <div className="mb-6">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) =>
-              setSearch(e.target.value)
-            }
-            placeholder="Buscar receta..."
-            className="w-full rounded-2xl border border-gray-200 bg-white px-5 py-4 text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-400"
-          />
+        <div className="mb-4 sm:mb-5">
+          <div className="flex items-center rounded-2xl border border-[#E1E2DB] bg-white px-3 py-3 shadow-sm sm:px-4">
+            <span className="mr-2 text-lg">⌕</span>
+
+            <input
+              type="text"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar receta o ingrediente..."
+              className="w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-[#9AA29D]"
+            />
+          </div>
         </div>
 
         {/* CATEGORÍAS */}
-        <div className="mb-8 flex gap-2 overflow-x-auto pb-2">
-          {categories.map(
-            (category) => (
-              <button
-                key={category}
-                onClick={() =>
-                  setSelectedCategory(
-                    category
-                  )
-                }
-                className={`whitespace-nowrap rounded-full px-4 py-2 text-sm transition ${
-                  selectedCategory ===
-                  category
-                    ? "bg-gray-900 text-white"
-                    : "bg-white text-gray-600 hover:bg-gray-100"
-                }`}
-              >
-                {category}
-              </button>
-            )
-          )}
+        <div className="mb-5 overflow-x-auto pb-1 sm:mb-6">
+          <div className="flex min-w-max gap-2">
+            {categories.map((category) => {
+              const active = selectedCategory === category;
+
+              return (
+                <button
+                  key={category}
+                  type="button"
+                  onClick={() => setSelectedCategory(category)}
+                  className={`rounded-full px-3 py-2 text-xs font-medium transition sm:px-4 sm:text-sm ${
+                    active
+                      ? "bg-[#52685A] text-white"
+                      : "border border-[#E1E2DB] bg-white text-[#52685A]"
+                  }`}
+                >
+                  {category}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* RECETAS */}
-        {filteredRecipes.length ===
-        0 ? (
-          <div className="rounded-3xl bg-white p-12 text-center">
-            <div className="mb-3 text-5xl">
-              🍽️
-            </div>
+        {loading ? (
+          <div className="rounded-3xl border border-[#E4E3DA] bg-white p-8 text-center shadow-sm">
+            <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-[#DDE8DF] border-t-[#52685A]" />
 
-            <h2 className="text-xl font-semibold text-gray-900">
-              No hay recetas
-            </h2>
+            <p className="text-sm text-[#6B756E]">
+              Cargando tus recetas...
+            </p>
+          </div>
+        ) : filteredRecipes.length === 0 ? (
+          <div className="rounded-3xl border border-[#E4E3DA] bg-white p-8 text-center shadow-sm">
+            <div className="mb-3 text-4xl">🍽️</div>
 
-            <p className="mt-2 text-gray-500">
+            <h2 className="text-lg font-semibold">No hay recetas</h2>
+
+            <p className="mt-1 text-sm text-[#6B756E]">
               Prueba con otra búsqueda o categoría.
             </p>
           </div>
         ) : (
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredRecipes.map(
-              (recipe) => {
-                const style =
-                  getCategoryStyle(
-                    recipe.category
-                  );
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
+            {filteredRecipes.map((recipe) => {
+              const style = getCategoryStyle(recipe.category);
+              const favorite = isFavorite(String(recipe.id));
 
-                const isFavorite =
-                  favorites.includes(
-                    recipe.id
-                  );
-
-                return (
-                  <div
-                    key={recipe.id}
-                    className="group relative overflow-hidden rounded-3xl bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+              return (
+                <div
+                  key={String(recipe.id)}
+                  className="group relative min-w-0 overflow-hidden rounded-2xl border border-[#E4E3DA] bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:rounded-3xl"
+                >
+                  <Link
+                    href={`/recetas/${recipe.id}`}
+                    className="block h-full"
                   >
-                    <Link
-                      href={`/recetas/${recipe.id}`}
+                    <div
+                      className="flex h-28 items-center justify-center sm:h-36"
+                      style={{
+                        backgroundColor: recipe.color || style.color,
+                      }}
                     >
-                      <div
-                        className={`flex h-44 items-center justify-center ${style.color}`}
-                      >
-                        <span className="text-7xl">
-                          {recipe.emoji ||
-                            style.emoji}
+                      <span className="text-4xl sm:text-6xl">
+                        {recipe.emoji || style.emoji}
+                      </span>
+                    </div>
+
+                    <div className="p-3 pr-10 sm:p-4 sm:pr-14">
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="max-w-full truncate rounded-full bg-[#F0F3EF] px-2 py-1 text-[10px] font-medium text-[#52685A] sm:px-2.5 sm:text-xs">
+                          {recipe.category}
                         </span>
                       </div>
 
-                      <div className="p-5">
-                        <div className="mb-2 flex items-center justify-between">
-                          <span className="text-xs font-medium text-gray-500">
-                            {recipe.category}
+                      <h2 className="line-clamp-2 break-words text-sm font-semibold leading-snug sm:text-lg sm:leading-tight">
+                        {recipe.name}
+                      </h2>
+
+                      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-[#747D77] sm:mt-3 sm:gap-3 sm:text-xs">
+                        {recipe.time && (
+                          <span className="whitespace-nowrap">
+                            ⏱ {recipe.time}
                           </span>
-
-                          <span className="text-xs text-gray-400">
-                            {recipe.time}
-                          </span>
-                        </div>
-
-                        <h2 className="text-xl font-semibold text-gray-900">
-                          {recipe.name}
-                        </h2>
-
-                        {recipe.description && (
-                          <p className="mt-2 line-clamp-2 text-sm text-gray-500">
-                            {
-                              recipe.description
-                            }
-                          </p>
                         )}
 
-                        <div className="mt-4 flex items-center justify-between text-sm text-gray-500">
-                          <span>
-                            {
-                              recipe.difficulty
-                            }
+                        {recipe.difficulty && (
+                          <span className="whitespace-nowrap">
+                            · {recipe.difficulty}
                           </span>
+                        )}
 
-                          {recipe.servings && (
-                            <span>
-                              👥{" "}
-                              {
-                                recipe.servings
-                              }
-                            </span>
-                          )}
-                        </div>
+                        {recipe.servings && (
+                          <span className="whitespace-nowrap">
+                            · 👤 {recipe.servings}
+                          </span>
+                        )}
                       </div>
-                    </Link>
+                    </div>
+                  </Link>
 
-                    <button
-                      onClick={() =>
-                        toggleFavorite(
-                          recipe.id
-                        )
-                      }
-                      className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 shadow-sm backdrop-blur"
-                    >
-                      {isFavorite
-                        ? "❤️"
-                        : "🤍"}
-                    </button>
-                  </div>
-                );
-              }
-            )}
+                  <button
+                    type="button"
+                    onClick={() => toggleFavorite(String(recipe.id))}
+                    className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-base shadow-sm backdrop-blur transition hover:scale-105 sm:right-4 sm:top-4 sm:h-9 sm:w-9 sm:text-lg"
+                    aria-label={
+                      favorite
+                        ? "Quitar de favoritos"
+                        : "Añadir a favoritos"
+                    }
+                  >
+                    {favorite ? "❤️" : "♡"}
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* MODAL PARA AÑADIR / IMPORTAR */}
-      {(showImport ||
-        showManualRecipe) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
+      {/* MODAL CREAR RECETA */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 sm:items-center sm:p-4">
+          <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-t-3xl bg-[#F7F5EF] p-5 shadow-2xl sm:rounded-3xl">
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold">Nueva receta</h2>
 
-            {!previewRecipe ? (
-              <>
-                <div className="mb-6 flex items-center justify-between">
-                  <h2 className="text-2xl font-bold text-gray-900">
-                    Añadir receta
-                  </h2>
+                <p className="mt-1 text-sm text-[#6B756E]">
+                  Añádela a tu colección
+                </p>
+              </div>
 
-                  <button
-                    onClick={closeImport}
-                    className="text-2xl text-gray-400 hover:text-gray-700"
+              <button
+                type="button"
+                onClick={() => setShowCreate(false)}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-lg text-[#52685A] shadow-sm"
+                aria-label="Cerrar"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">
+                  Nombre
+                </label>
+
+                <input
+                  value={newRecipeName}
+                  onChange={(event) => setNewRecipeName(event.target.value)}
+                  placeholder="Ej. Pasta con pollo"
+                  className="w-full rounded-2xl border border-[#DEDCD2] bg-white px-4 py-3 text-sm outline-none focus:border-[#52685A]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">
+                    Categoría
+                  </label>
+
+                  <select
+                    value={newRecipeCategory}
+                    onChange={(event) =>
+                      setNewRecipeCategory(event.target.value)
+                    }
+                    className="w-full rounded-2xl border border-[#DEDCD2] bg-white px-4 py-3 text-sm outline-none"
                   >
-                    ×
-                  </button>
+                    {recipeCategories.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  <button
-                    onClick={() => {
-                      setShowManualRecipe(
-                        true
-                      );
-                      setShowImport(false);
-                      openManualRecipe();
-                    }}
-                    className="rounded-2xl border border-gray-200 p-6 text-left transition hover:border-gray-400 hover:bg-gray-50"
-                  >
-                    <div className="mb-3 text-3xl">
-                      ✍️
-                    </div>
-
-                    <h3 className="font-semibold text-gray-900">
-                      Crear receta
-                      manualmente
-                    </h3>
-
-                    <p className="mt-1 text-sm text-gray-500">
-                      Introduce tú todos los datos de la receta.
-                    </p>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setShowImport(true);
-                      setShowManualRecipe(
-                        false
-                      );
-                    }}
-                    className="rounded-2xl border border-gray-200 p-6 text-left transition hover:border-gray-400 hover:bg-gray-50"
-                  >
-                    <div className="mb-3 text-3xl">
-                      📱
-                    </div>
-
-                    <h3 className="font-semibold text-gray-900">
-                      Importar de Instagram
-                    </h3>
-
-                    <p className="mt-1 text-sm text-gray-500">
-                      Pega el enlace de una publicación o reel.
-                    </p>
-                  </button>
-                </div>
-
-                {showImport && (
-                  <div className="mt-6 rounded-2xl bg-gray-50 p-5">
-                    <label className="mb-2 block text-sm font-medium text-gray-900">
-                      Enlace de Instagram
-                    </label>
-
-                    <input
-                      type="text"
-                      value={instagramUrl}
-                      onChange={(e) =>
-                        setInstagramUrl(
-                          e.target.value
-                        )
-                      }
-                      placeholder="https://www.instagram.com/..."
-                      className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-400"
-                    />
-
-                    {importError && (
-                      <p className="mt-3 text-sm text-red-500">
-                        {importError}
-                      </p>
-                    )}
-
-                    <button
-                      onClick={
-                        handleImport
-                      }
-                      disabled={
-                        loadingImport
-                      }
-                      className="mt-4 w-full rounded-xl bg-gray-900 px-4 py-3 font-medium text-white disabled:opacity-50"
-                    >
-                      {loadingImport
-                        ? "Importando..."
-                        : "Importar receta"}
-                    </button>
-
-                    <button
-                      onClick={() =>
-                        setShowTextHelp(
-                          !showTextHelp
-                        )
-                      }
-                      className="mt-3 text-sm text-gray-600 underline"
-                    >
-                      ¿No funciona el enlace?
-                    </button>
-
-                    {showTextHelp && (
-                      <div className="mt-4 rounded-xl bg-white p-4">
-                        <p className="text-sm text-gray-600">
-                          Puedes copiar aquí el texto de la receta.
-                        </p>
-
-                        <textarea
-                          value={recipeText}
-                          onChange={(e) =>
-                            setRecipeText(
-                              e.target.value
-                            )
-                          }
-                          placeholder="Pega aquí el texto..."
-                          rows={6}
-                          className="mt-3 w-full rounded-xl border border-gray-200 px-4 py-3 text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-400"
-                        />
-
-                        <button
-                          onClick={
-                            handleCompleteWithHelp
-                          }
-                          className="mt-3 rounded-xl bg-gray-900 px-4 py-3 text-sm font-medium text-white"
-                        >
-                          Continuar
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                {/* FORMULARIO DE RECETA */}
-                <div className="mb-6 flex items-center justify-between">
-                  <div>
-                    <h2 className="text-2xl font-bold text-gray-900">
-                      {previewRecipe.name ||
-                        "Nueva receta"}
-                    </h2>
-
-                    <p className="mt-1 text-sm text-gray-500">
-                      Revisa y completa los datos
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={closeImport}
-                    className="text-2xl text-gray-400 hover:text-gray-700"
-                  >
-                    ×
-                  </button>
-                </div>
-
-                {/* NOMBRE */}
-                <div className="mb-5">
-                  <label className="mb-2 block text-sm font-medium text-gray-900">
-                    Nombre
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">
+                    Tiempo
                   </label>
 
                   <input
-                    type="text"
-                    value={
-                      previewRecipe.name
-                    }
-                    onChange={(e) =>
-                      setPreviewRecipe({
-                        ...previewRecipe,
-                        name: e.target.value,
-                      })
-                    }
-                    className="w-full rounded-xl border border-gray-200 px-4 py-3 text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-400"
+                    value={newRecipeTime}
+                    onChange={(event) => setNewRecipeTime(event.target.value)}
+                    placeholder="30 min"
+                    className="w-full rounded-2xl border border-[#DEDCD2] bg-white px-4 py-3 text-sm outline-none"
                   />
                 </div>
+              </div>
 
-                {/* DESCRIPCIÓN */}
-                <div className="mb-5">
-                  <label className="mb-2 block text-sm font-medium text-gray-900">
-                    Descripción
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">
+                    Dificultad
                   </label>
 
-                  <textarea
-                    value={
-                      previewRecipe.description ||
-                      ""
+                  <select
+                    value={newRecipeDifficulty}
+                    onChange={(event) =>
+                      setNewRecipeDifficulty(event.target.value)
                     }
-                    onChange={(e) =>
-                      setPreviewRecipe({
-                        ...previewRecipe,
-                        description:
-                          e.target.value,
-                      })
+                    className="w-full rounded-2xl border border-[#DEDCD2] bg-white px-4 py-3 text-sm outline-none"
+                  >
+                    <option value="Fácil">Fácil</option>
+                    <option value="Media">Media</option>
+                    <option value="Difícil">Difícil</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">
+                    Raciones
+                  </label>
+
+                  <input
+                    type="number"
+                    min="1"
+                    value={newRecipeServings}
+                    onChange={(event) =>
+                      setNewRecipeServings(event.target.value)
                     }
-                    rows={3}
-                    className="w-full rounded-xl border border-gray-200 px-4 py-3 text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-400"
+                    placeholder="2"
+                    className="w-full rounded-2xl border border-[#DEDCD2] bg-white px-4 py-3 text-sm outline-none"
                   />
                 </div>
+              </div>
 
-                {/* DATOS BÁSICOS */}
-                <div className="mb-6 grid gap-4 md:grid-cols-3">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-gray-900">
-                      Categoría
-                    </label>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">
+                  Descripción
+                </label>
 
-                    <select
-                      value={
-                        previewRecipe.category
-                      }
-                      onChange={(e) =>
-                        setPreviewRecipe({
-                          ...previewRecipe,
-                          category:
-                            e.target.value,
-                        })
-                      }
-                      className="w-full rounded-xl border border-gray-200 px-4 py-3 text-gray-900 outline-none focus:border-gray-400"
-                    >
-                      {recipeCategories.map(
-                        (category) => (
-                          <option
-                            key={category}
-                            value={
-                              category
-                            }
-                          >
-                            {category}
-                          </option>
-                        )
-                      )}
-                    </select>
-                  </div>
+                <textarea
+                  value={newRecipeDescription}
+                  onChange={(event) =>
+                    setNewRecipeDescription(event.target.value)
+                  }
+                  placeholder="Una pequeña descripción..."
+                  rows={3}
+                  className="w-full resize-none rounded-2xl border border-[#DEDCD2] bg-white px-4 py-3 text-sm outline-none focus:border-[#52685A]"
+                />
+              </div>
 
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-gray-900">
-                      Tiempo
-                    </label>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">
+                  Ingredientes
+                </label>
 
-                    <input
-                      type="text"
-                      value={
-                        previewRecipe.time
-                      }
-                      onChange={(e) =>
-                        setPreviewRecipe({
-                          ...previewRecipe,
-                          time: e.target.value,
-                        })
-                      }
-                      placeholder="30 min"
-                      className="w-full rounded-xl border border-gray-200 px-4 py-3 text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-400"
-                    />
-                  </div>
+                <p className="mb-2 text-xs text-[#7A827D]">
+                  Uno por línea. Ejemplo: 200 g pasta
+                </p>
 
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-gray-900">
-                      Raciones
-                    </label>
+                <textarea
+                  value={newRecipeIngredients}
+                  onChange={(event) =>
+                    setNewRecipeIngredients(event.target.value)
+                  }
+                  placeholder={"200 g pasta\n1 cebolla\n2 huevos"}
+                  rows={6}
+                  className="w-full resize-none rounded-2xl border border-[#DEDCD2] bg-white px-4 py-3 text-sm outline-none focus:border-[#52685A]"
+                />
+              </div>
 
-                    <input
-                      type="number"
-                      min="1"
-                      value={
-                        previewRecipe.servings ||
-                        ""
-                      }
-                      onChange={(e) =>
-                        setPreviewRecipe({
-                          ...previewRecipe,
-                          servings: Number(
-                            e.target.value
-                          ),
-                        })
-                      }
-                      className="w-full rounded-xl border border-gray-200 px-4 py-3 text-gray-900 outline-none focus:border-gray-400"
-                    />
-                  </div>
-                </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">
+                  Preparación
+                </label>
 
-                {/* INGREDIENTES */}
-                <div className="mb-6">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-gray-900">
-                      Ingredientes
-                    </h3>
+                <p className="mb-2 text-xs text-[#7A827D]">
+                  Un paso por línea.
+                </p>
 
-                    <button
-                      onClick={
-                        addIngredient
-                      }
-                      className="text-sm font-medium text-gray-700 underline"
-                    >
-                      + Añadir ingrediente
-                    </button>
-                  </div>
+                <textarea
+                  value={newRecipeSteps}
+                  onChange={(event) => setNewRecipeSteps(event.target.value)}
+                  placeholder={"Cuece la pasta.\nPrepara la salsa.\nMezcla todo."}
+                  rows={7}
+                  className="w-full resize-none rounded-2xl border border-[#DEDCD2] bg-white px-4 py-3 text-sm outline-none focus:border-[#52685A]"
+                />
+              </div>
 
-                  <div className="space-y-3">
-                    {ingredientInputs.map(
-                      (
-                        ingredient,
-                        index
-                      ) => (
-                        <div
-                          key={index}
-                          className="grid grid-cols-[90px_110px_1fr_40px] gap-2"
-                        >
-                          <input
-                            type="text"
-                            value={
-                              ingredient.quantity
-                            }
-                            onChange={(e) =>
-                              updateIngredient(
-                                index,
-                                "quantity",
-                                e.target.value
-                              )
-                            }
-                            placeholder="Cantidad"
-                            className="rounded-xl border border-gray-200 px-3 py-3 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-400"
-                          />
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCreate(false)}
+                  className="flex-1 rounded-2xl border border-[#DAD9D0] bg-white px-4 py-3 text-sm font-medium text-[#52685A]"
+                >
+                  Cancelar
+                </button>
 
-                          <select
-                            value={
-                              ingredient.unit
-                            }
-                            onChange={(e) =>
-                              updateIngredient(
-                                index,
-                                "unit",
-                                e.target.value
-                              )
-                            }
-                            className="rounded-xl border border-gray-200 px-3 py-3 text-sm text-gray-900 outline-none focus:border-gray-400"
-                          >
-                            <option value="">
-                              Unidad
-                            </option>
-                            <option value="g">
-                              g
-                            </option>
-                            <option value="kg">
-                              kg
-                            </option>
-                            <option value="ml">
-                              ml
-                            </option>
-                            <option value="l">
-                              l
-                            </option>
-                            <option value="ud">
-                              ud
-                            </option>
-                            <option value="cda">
-                              cda
-                            </option>
-                            <option value="cdta">
-                              cdta
-                            </option>
-                          </select>
-
-                          <input
-                            type="text"
-                            value={
-                              ingredient.name
-                            }
-                            onChange={(e) =>
-                              updateIngredient(
-                                index,
-                                "name",
-                                e.target.value
-                              )
-                            }
-                            placeholder="Ingrediente"
-                            className="rounded-xl border border-gray-200 px-3 py-3 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-400"
-                          />
-
-                          <button
-                            onClick={() =>
-                              deleteIngredient(
-                                index
-                              )
-                            }
-                            className="rounded-xl border border-gray-200 text-gray-400 hover:text-red-500"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-
-                {/* PASOS */}
-                <div className="mb-6">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-gray-900">
-                      Preparación
-                    </h3>
-
-                    <button
-                      onClick={addStep}
-                      className="text-sm font-medium text-gray-700 underline"
-                    >
-                      + Añadir paso
-                    </button>
-                  </div>
-
-                  <div className="space-y-3">
-                    {previewRecipe.steps.map(
-                      (
-                        step,
-                        index
-                      ) => (
-                        <div
-                          key={index}
-                          className="flex gap-3"
-                        >
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-100 text-sm font-semibold text-gray-700">
-                            {index + 1}
-                          </div>
-
-                          <textarea
-                            value={step}
-                            onChange={(e) =>
-                              updateStep(
-                                index,
-                                e.target.value
-                              )
-                            }
-                            placeholder={`Paso ${
-                              index + 1
-                            }`}
-                            rows={2}
-                            className="flex-1 rounded-xl border border-gray-200 px-4 py-3 text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-400"
-                          />
-
-                          <button
-                            onClick={() =>
-                              deleteStep(
-                                index
-                              )
-                            }
-                            className="h-10 w-10 shrink-0 rounded-xl border border-gray-200 text-gray-400 hover:text-red-500"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-
-                {importError && (
-                  <p className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-600">
-                    {importError}
-                  </p>
-                )}
-
-                {/* BOTONES */}
-                <div className="flex justify-end gap-3 border-t border-gray-100 pt-5">
-                  <button
-                    onClick={closeImport}
-                    className="rounded-xl px-5 py-3 text-gray-600 hover:bg-gray-100"
-                  >
-                    Cancelar
-                  </button>
-
-                  <button
-                    onClick={
-                      saveImportedRecipe
-                    }
-                    className="rounded-xl bg-gray-900 px-6 py-3 font-medium text-white hover:bg-gray-800"
-                  >
-                    Guardar receta
-                  </button>
-                </div>
-              </>
-            )}
+                <button
+                  type="button"
+                  onClick={handleCreateRecipe}
+                  disabled={!newRecipeName.trim()}
+                  className="flex-1 rounded-2xl bg-[#52685A] px-4 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Guardar receta
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

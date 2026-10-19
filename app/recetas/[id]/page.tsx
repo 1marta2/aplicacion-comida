@@ -221,34 +221,47 @@ const baseRecipes: Recipe[] = [
 ];
 
 const categoryStyles: Record<string, string> = {
-  Pasta: "bg-[#E9E1D5]",
+  Desayuno: "bg-[#E9E1D5]",
+  Comida: "bg-[#E1E9DD]",
+  Cena: "bg-[#E1E9DD]",
+  Postres: "bg-[#ECE6D2]",
+  Snacks: "bg-[#E8E2D6]",
   Ensaladas: "bg-[#E1E9DD]",
+  Pasta: "bg-[#E9E1D5]",
   Arroces: "bg-[#E8E2D6]",
-  Legumbres: "bg-[#E7DDD1]",
   Carnes: "bg-[#E8DCD7]",
   Pescados: "bg-[#DDE7E9]",
-  Huevos: "bg-[#ECE6D2]",
+  Legumbres: "bg-[#E7DDD1]",
+  Otros: "bg-[#ECE6D2]",
 };
 
 const categoryEmojis: Record<string, string> = {
-  Pasta: "🍝",
+  Desayuno: "🍳",
+  Comida: "🍽️",
+  Cena: "🌙",
+  Postres: "🍰",
+  Snacks: "🥨",
   Ensaladas: "🥗",
+  Pasta: "🍝",
   Arroces: "🍚",
   Legumbres: "🥣",
   Carnes: "🍗",
   Pescados: "🐟",
-  Huevos: "🥚",
   Otros: "🍽️",
 };
 
 const categories = [
-  "Pasta",
+  "Desayuno",
+  "Comida",
+  "Cena",
+  "Postres",
+  "Snacks",
   "Ensaladas",
+  "Pasta",
   "Arroces",
-  "Legumbres",
   "Carnes",
   "Pescados",
-  "Huevos",
+  "Legumbres",
   "Otros",
 ];
 
@@ -754,6 +767,122 @@ function getIngredientStatus(
   };
 }
 
+function getCurrentWeekMonday() {
+  const today = new Date();
+  const currentDay = today.getDay();
+
+  const mondayOffset =
+    currentDay === 0
+      ? -6
+      : 1 - currentDay;
+
+  const monday = new Date(today);
+
+  monday.setDate(
+    today.getDate() + mondayOffset
+  );
+
+  monday.setHours(0, 0, 0, 0);
+
+  return monday;
+}
+
+function getDateForDayIndex(
+  dayIndex: number
+) {
+  const monday =
+    getCurrentWeekMonday();
+
+  const targetDate =
+    new Date(monday);
+
+  targetDate.setDate(
+    monday.getDate() + dayIndex
+  );
+
+  const year =
+    targetDate.getFullYear();
+
+  const month = String(
+    targetDate.getMonth() + 1
+  ).padStart(2, "0");
+
+  const date = String(
+    targetDate.getDate()
+  ).padStart(2, "0");
+
+  return `${year}-${month}-${date}`;
+}
+
+function normalizeSupabasePlanner(
+  rows: Array<{
+    recipe_id: number | string;
+    date: string;
+    meal_type: string;
+  }>
+): Planner {
+  const result: Planner = {};
+
+  const monday =
+    getCurrentWeekMonday();
+
+  rows.forEach((row) => {
+    const recipeId = String(
+      row.recipe_id
+    );
+
+    const rowDate =
+      new Date(`${row.date}T00:00:00`);
+
+    const diff =
+      Math.round(
+        (rowDate.getTime() -
+          monday.getTime()) /
+          (1000 * 60 * 60 * 24)
+      );
+
+    if (
+      diff < 0 ||
+      diff > 6
+    ) {
+      return;
+    }
+
+    const day =
+      days[diff];
+
+    if (!day) {
+      return;
+    }
+
+    if (!result[day]) {
+      result[day] = {};
+    }
+
+    if (!Array.isArray(result[day][row.meal_type])) {
+      result[day][row.meal_type] = [];
+    }
+
+    const recipesForMeal =
+      result[day][row.meal_type] || [];
+
+    if (
+      !recipesForMeal.includes(
+        recipeId
+      )
+    ) {
+      recipesForMeal.push(
+        recipeId
+      );
+    }
+
+    result[day][row.meal_type] =
+      recipesForMeal;
+  });
+
+  return result;
+}
+
 export default function RecipeDetailPage({
   params,
 }: {
@@ -897,20 +1026,32 @@ export default function RecipeDetailPage({
         }
 
         /*
-         * CARGA DESDE SUPABASE
-         *
-         * Hacemos las consultas por separado
-         * para evitar problemas con las relaciones
-         * automáticas de Supabase.
+         * USUARIO
          */
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+
+        if (userError) {
+          console.error(
+            "Error obteniendo usuario:",
+            userError
+          );
+        }
+
         const numericId = Number(id);
 
+        /*
+         * CARGA DESDE SUPABASE
+         */
         if (
+          user &&
           Number.isInteger(numericId) &&
           numericId > 0
         ) {
           /*
-           * 1. RECETA
+           * 1. RECETA ACTUAL
            */
           const {
             data: recipeData,
@@ -918,9 +1059,10 @@ export default function RecipeDetailPage({
           } = await supabase
             .from("recipes")
             .select(
-              "id, title, description, preparation_time, servings, instructions, category_id"
+              "id, title, description, preparation_time, difficulty, servings, instructions, category_id"
             )
             .eq("id", numericId)
+            .eq("user_id", user.id)
             .single();
 
           if (recipeError) {
@@ -965,60 +1107,242 @@ export default function RecipeDetailPage({
           }
 
           /*
-           * 2. CATEGORÍA
+           * 2. CARGAMOS TODAS LAS RECETAS
+           *
+           * Esto es importante para poder enseñar
+           * dentro del planificador las otras recetas
+           * que ya están en cada comida.
            */
-          let categoryName = "Otros";
+          const {
+            data: allSupabaseRecipes,
+            error: allRecipesError,
+          } = await supabase
+            .from("recipes")
+            .select(
+              "id, title, description, preparation_time, difficulty, servings, instructions, category_id"
+            )
+            .eq("user_id", user.id)
+            .order("created_at", {
+              ascending: false,
+            });
 
-          if (recipeData.category_id) {
-            const {
-              data: categoryData,
-              error: categoryError,
-            } = await supabase
-              .from("categories")
-              .select("name")
-              .eq(
-                "id",
-                recipeData.category_id
-              )
-              .maybeSingle();
-
-            if (categoryError) {
-              console.error(
-                "Error cargando categoría:",
-                categoryError.message
-              );
-            }
-
-            if (
-              categoryData &&
-              typeof categoryData.name ===
-                "string"
-            ) {
-              categoryName =
-                categoryData.name;
-
-              /*
-               * En la base de datos usamos
-               * "Arroz", "Carne" y "Pescado",
-               * mientras que la app utiliza
-               * "Arroces", "Carnes" y "Pescados".
-               */
-              if (categoryName === "Arroz") {
-                categoryName = "Arroces";
-              }
-
-              if (categoryName === "Carne") {
-                categoryName = "Carnes";
-              }
-
-              if (categoryName === "Pescado") {
-                categoryName = "Pescados";
-              }
-            }
+          if (allRecipesError) {
+            console.error(
+              "Error cargando todas las recetas:",
+              allRecipesError
+            );
           }
 
           /*
-           * 3. INGREDIENTES DE LA RECETA
+           * Mapa de categorías.
+           */
+          const categoryCache =
+            new Map<number, string>();
+
+          const categoryIds = Array.from(
+            new Set(
+              (allSupabaseRecipes || [])
+                .map(
+                  (item) =>
+                    item.category_id
+                )
+                .filter(
+                  (
+                    value
+                  ): value is number =>
+                    typeof value ===
+                    "number"
+                )
+            )
+          );
+
+          if (categoryIds.length > 0) {
+            const {
+              data: categoriesData,
+              error: categoriesError,
+            } = await supabase
+              .from("categories")
+              .select("id, name")
+              .in(
+                "id",
+                categoryIds
+              );
+
+            if (categoriesError) {
+              console.error(
+                "Error cargando categorías:",
+                categoriesError
+              );
+            }
+
+            (
+              categoriesData || []
+            ).forEach((category) => {
+              let categoryName =
+                category.name;
+
+              if (
+                categoryName ===
+                "Arroz"
+              ) {
+                categoryName =
+                  "Arroces";
+              }
+
+              if (
+                categoryName ===
+                "Carne"
+              ) {
+                categoryName =
+                  "Carnes";
+              }
+
+              if (
+                categoryName ===
+                "Pescado"
+              ) {
+                categoryName =
+                  "Pescados";
+              }
+
+              categoryCache.set(
+                category.id,
+                categoryName
+              );
+            });
+          }
+
+          /*
+           * Convertimos todas las recetas de Supabase
+           * a la estructura que utiliza la app.
+           */
+          const supabaseRecipes: Recipe[] =
+            (
+              allSupabaseRecipes || []
+            ).map((item) => {
+              const categoryName =
+                item.category_id
+                  ? categoryCache.get(
+                      item.category_id
+                    ) || "Otros"
+                  : "Otros";
+
+              const baseRecipe =
+                baseRecipes.find(
+                  (base) =>
+                    base.name
+                      .toLowerCase()
+                      .trim() ===
+                    String(
+                      item.title || ""
+                    )
+                      .toLowerCase()
+                      .trim()
+                );
+
+              const instructions =
+                typeof item.instructions ===
+                "string"
+                  ? item.instructions
+                      .split("\n")
+                      .map((step) =>
+                        step.trim()
+                      )
+                      .filter(Boolean)
+                  : [];
+
+              return {
+                id: String(
+                  item.id
+                ),
+                name:
+                  item.title ||
+                  baseRecipe?.name ||
+                  "Receta",
+                category:
+                  categoryName,
+                time:
+                  item.preparation_time !==
+                    null &&
+                  item.preparation_time !==
+                    undefined
+                    ? String(
+                        item.preparation_time
+                      )
+                    : baseRecipe?.time ||
+                      "—",
+                difficulty:
+                  baseRecipe?.difficulty ||
+                  "—",
+                emoji:
+                  baseRecipe?.emoji ||
+                  categoryEmojis[
+                    categoryName
+                  ] ||
+                  "🍽️",
+                description:
+                  item.description ||
+                  baseRecipe?.description ||
+                  "",
+                servings:
+                  typeof item.servings ===
+                  "number"
+                    ? item.servings
+                    : baseRecipe?.servings ||
+                      2,
+                ingredients:
+                  baseRecipe?.ingredients ||
+                  [],
+                steps:
+                  instructions.length > 0
+                    ? instructions
+                    : baseRecipe?.steps ||
+                      [],
+              };
+            });
+
+          /*
+           * Unimos las recetas de Supabase con las
+           * locales, pero sin duplicarlas por ID.
+           */
+          supabaseRecipes.forEach(
+            (supabaseRecipe) => {
+              const existingIndex =
+                mergedRecipes.findIndex(
+                  (item) =>
+                    item.id ===
+                    supabaseRecipe.id
+                );
+
+              if (
+                existingIndex >= 0
+              ) {
+                mergedRecipes[
+                  existingIndex
+                ] = supabaseRecipe;
+              } else {
+                mergedRecipes.push(
+                  supabaseRecipe
+                );
+              }
+            }
+          );
+
+          /*
+           * 3. CATEGORÍA DE LA RECETA ACTUAL
+           */
+          let categoryName =
+            "Otros";
+
+          if (recipeData.category_id) {
+            categoryName =
+              categoryCache.get(
+                recipeData.category_id
+              ) || "Otros";
+          }
+
+          /*
+           * 4. INGREDIENTES DE LA RECETA
            */
           const {
             data: relationData,
@@ -1026,7 +1350,7 @@ export default function RecipeDetailPage({
           } = await supabase
             .from("recipe_ingredients")
             .select(
-              "quantity, unit, ingredient_id"
+              "quantity, unit, ingredient_id, display_name"
             )
             .eq(
               "recipe_id",
@@ -1035,29 +1359,11 @@ export default function RecipeDetailPage({
 
           if (relationError) {
             console.error(
-              "Error cargando ingredientes de la receta:"
-            );
-            console.error(
-              "message:",
-              relationError.message
-            );
-            console.error(
-              "details:",
-              relationError.details
-            );
-            console.error(
-              "hint:",
-              relationError.hint
-            );
-            console.error(
-              "code:",
-              relationError.code
+              "Error cargando ingredientes de la receta:",
+              relationError
             );
           }
 
-          /*
-           * 4. BUSCAMOS LOS NOMBRES DE LOS INGREDIENTES
-           */
           const supabaseIngredients: string[] =
             [];
 
@@ -1117,13 +1423,10 @@ export default function RecipeDetailPage({
                   ? relation.unit
                   : "";
 
-              const ingredientName =
-                ingredientData.name;
-
               const formattedIngredient = [
                 quantity,
                 unit,
-                ingredientName,
+                relation.display_name || ingredientData.name,
               ]
                 .filter(Boolean)
                 .join(" ");
@@ -1153,8 +1456,21 @@ export default function RecipeDetailPage({
               : [];
 
           /*
-           * 6. CONSTRUIMOS LA RECETA
+           * 6. RECETA ACTUAL
            */
+          const baseRecipe =
+            baseRecipes.find(
+              (base) =>
+                base.name
+                  .toLowerCase()
+                  .trim() ===
+                String(
+                  recipeData.title || ""
+                )
+                  .toLowerCase()
+                  .trim()
+            );
+
           const supabaseRecipe: Recipe =
             {
               id: String(
@@ -1174,34 +1490,50 @@ export default function RecipeDetailPage({
                       recipeData.preparation_time
                     )
                   : "—",
-              difficulty: "—",
+              difficulty:
+                recipeData.difficulty ||
+                baseRecipe?.difficulty ||
+                "Fácil",
               emoji:
+                baseRecipe?.emoji ||
                 categoryEmojis[
                   categoryName
-                ] || "🍽️",
+                ] ||
+                "🍽️",
               description:
                 recipeData.description ||
+                baseRecipe?.description ||
                 "",
               servings:
                 typeof recipeData.servings ===
                 "number"
                   ? recipeData.servings
-                  : 2,
+                  : baseRecipe?.servings ||
+                    2,
               ingredients:
-                supabaseIngredients,
-              steps: supabaseSteps,
+                supabaseIngredients.length >
+                0
+                  ? supabaseIngredients
+                  : baseRecipe?.ingredients ||
+                    [],
+              steps:
+                supabaseSteps.length >
+                0
+                  ? supabaseSteps
+                  : baseRecipe?.steps ||
+                    [],
             };
 
-          const existingIndex =
+          const currentIndex =
             mergedRecipes.findIndex(
               (item) =>
                 item.id ===
                 supabaseRecipe.id
             );
 
-          if (existingIndex >= 0) {
+          if (currentIndex >= 0) {
             mergedRecipes[
-              existingIndex
+              currentIndex
             ] = supabaseRecipe;
           } else {
             mergedRecipes.push(
@@ -1212,7 +1544,182 @@ export default function RecipeDetailPage({
           setRecipe(
             supabaseRecipe
           );
+
+          /*
+           * 7. CARGAMOS LA PLANIFICACIÓN REAL
+           *    DESDE SUPABASE
+           */
+          const monday =
+            getCurrentWeekMonday();
+
+          const sunday =
+            new Date(monday);
+
+          sunday.setDate(
+            monday.getDate() + 6
+          );
+
+          const sundayYear =
+            sunday.getFullYear();
+
+          const sundayMonth =
+            String(
+              sunday.getMonth() + 1
+            ).padStart(2, "0");
+
+          const sundayDate =
+            String(
+              sunday.getDate()
+            ).padStart(2, "0");
+
+          const formattedSunday =
+            `${sundayYear}-${sundayMonth}-${sundayDate}`;
+
+          const mondayYear =
+            monday.getFullYear();
+
+          const mondayMonth =
+            String(
+              monday.getMonth() + 1
+            ).padStart(2, "0");
+
+          const mondayDate =
+            String(
+              monday.getDate()
+            ).padStart(2, "0");
+
+          const formattedMonday =
+            `${mondayYear}-${mondayMonth}-${mondayDate}`;
+
+          const {
+            data: planningData,
+            error: planningError,
+          } = await supabase
+            .from("planning")
+            .select(
+              "recipe_id, date, meal_type"
+            )
+            .eq("user_id", user.id)
+            .gte(
+              "date",
+              formattedMonday
+            )
+            .lte(
+              "date",
+              formattedSunday
+            );
+
+          if (planningError) {
+            console.error(
+              "Error cargando planificación desde Supabase:",
+              planningError
+            );
+
+            /*
+             * Si Supabase falla, usamos localStorage
+             * como respaldo.
+             */
+            if (
+              typeof window !==
+              "undefined"
+            ) {
+              const storedPlanner =
+                safeParseObject(
+                  localStorage.getItem(
+                    "planner"
+                  )
+                );
+
+              const normalizedPlanner: Planner =
+                {};
+
+              Object.entries(
+                storedPlanner
+              ).forEach(
+                ([
+                  day,
+                  mealsForDay,
+                ]) => {
+                  if (
+                    !mealsForDay ||
+                    typeof mealsForDay !==
+                      "object" ||
+                    Array.isArray(
+                      mealsForDay
+                    )
+                  ) {
+                    return;
+                  }
+
+                  normalizedPlanner[
+                    day
+                  ] = {};
+
+                  Object.entries(
+                    mealsForDay as Record<
+                      string,
+                      unknown
+                    >
+                  ).forEach(
+                    ([
+                      meal,
+                      recipesForMeal,
+                    ]) => {
+                      normalizedPlanner[
+                        day
+                      ][meal] =
+                        Array.isArray(
+                          recipesForMeal
+                        )
+                          ? recipesForMeal.filter(
+                              (
+                                recipeId
+                              ): recipeId is string =>
+                                typeof recipeId ===
+                                "string"
+                            )
+                          : [];
+                    }
+                  );
+                }
+              );
+
+              setPlanner(
+                normalizedPlanner
+              );
+            }
+          } else {
+            const supabasePlanner =
+              normalizeSupabasePlanner(
+                planningData || []
+              );
+
+            setPlanner(
+              supabasePlanner
+            );
+
+            /*
+             * Mantenemos también localStorage
+             * sincronizado para las partes antiguas
+             * de la aplicación.
+             */
+            if (
+              typeof window !==
+              "undefined"
+            ) {
+              localStorage.setItem(
+                "planner",
+                JSON.stringify(
+                  supabasePlanner
+                )
+              );
+            }
+          }
         } else {
+          /*
+           * Si la receta no es numérica, buscamos
+           * la versión local.
+           */
           const localRecipe =
             mergedRecipes.find(
               (item) =>
@@ -1224,6 +1731,80 @@ export default function RecipeDetailPage({
               localRecipe
             );
           }
+
+          /*
+           * Para recetas locales mantenemos el
+           * planificador de localStorage como respaldo.
+           */
+          if (
+            typeof window !==
+            "undefined"
+          ) {
+            const storedPlanner =
+              safeParseObject(
+                localStorage.getItem(
+                  "planner"
+                )
+              );
+
+            const normalizedPlanner: Planner =
+              {};
+
+            Object.entries(
+              storedPlanner
+            ).forEach(
+              ([
+                day,
+                mealsForDay,
+              ]) => {
+                if (
+                  !mealsForDay ||
+                  typeof mealsForDay !==
+                    "object" ||
+                  Array.isArray(
+                    mealsForDay
+                  )
+                ) {
+                  return;
+                }
+
+                normalizedPlanner[
+                  day
+                ] = {};
+
+                Object.entries(
+                  mealsForDay as Record<
+                    string,
+                    unknown
+                  >
+                ).forEach(
+                  ([
+                    meal,
+                    recipesForMeal,
+                  ]) => {
+                    normalizedPlanner[
+                      day
+                    ][meal] =
+                      Array.isArray(
+                        recipesForMeal
+                      )
+                        ? recipesForMeal.filter(
+                            (
+                              recipeId
+                            ): recipeId is string =>
+                              typeof recipeId ===
+                              "string"
+                          )
+                        : [];
+                  }
+                );
+              }
+            );
+
+            setPlanner(
+              normalizedPlanner
+            );
+          }
         }
 
         setAllRecipes(
@@ -1231,7 +1812,7 @@ export default function RecipeDetailPage({
         );
 
         /*
-         * FAVORITOS, PLANIFICADOR Y DESPENSA
+         * FAVORITOS Y DESPENSA
          */
         if (typeof window !== "undefined") {
           const storedFavorites =
@@ -1249,71 +1830,6 @@ export default function RecipeDetailPage({
                 typeof favorite ===
                 "string"
             )
-          );
-
-          const storedPlanner =
-            safeParseObject(
-              localStorage.getItem(
-                "planner"
-              )
-            );
-
-          const normalizedPlanner: Planner =
-            {};
-
-          Object.entries(
-            storedPlanner
-          ).forEach(
-            ([
-              day,
-              mealsForDay,
-            ]) => {
-              if (
-                !mealsForDay ||
-                typeof mealsForDay !==
-                  "object" ||
-                Array.isArray(
-                  mealsForDay
-                )
-              ) {
-                return;
-              }
-
-              normalizedPlanner[
-                day
-              ] = {};
-
-              Object.entries(
-                mealsForDay as Record<
-                  string,
-                  unknown
-                >
-              ).forEach(
-                ([
-                  meal,
-                  recipesForMeal,
-                ]) => {
-                  normalizedPlanner[
-                    day
-                  ][meal] =
-                    Array.isArray(
-                      recipesForMeal
-                    )
-                      ? recipesForMeal.filter(
-                          (
-                            recipeId
-                          ): recipeId is string =>
-                            typeof recipeId ===
-                            "string"
-                        )
-                      : [];
-                }
-              );
-            }
-          );
-
-          setPlanner(
-            normalizedPlanner
           );
 
           const storedPantry =
@@ -1387,13 +1903,18 @@ export default function RecipeDetailPage({
   }, [id]);
 
   /*
-   * Sincronización con el resto de la aplicación.
+   * Sincronización con cambios realizados
+   * desde otras partes de la aplicación.
+   *
+   * Para plannerChanged hacemos una consulta
+   * real a Supabase para no depender únicamente
+   * de localStorage.
    */
   useEffect(() => {
     if (typeof window === "undefined")
       return;
 
-    function syncFavorites() {
+    async function syncFavorites() {
       const storedFavorites =
         safeParseArray(
           localStorage.getItem(
@@ -1412,67 +1933,87 @@ export default function RecipeDetailPage({
       );
     }
 
-    function syncPlanner() {
-      const storedPlanner =
-        safeParseObject(
-          localStorage.getItem(
-            "planner"
-          )
+    async function syncPlanner() {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (!user) {
+          return;
+        }
+
+        const monday =
+          getCurrentWeekMonday();
+
+        const sunday =
+          new Date(monday);
+
+        sunday.setDate(
+          monday.getDate() + 6
         );
 
-      const normalizedPlanner: Planner =
-        {};
+        const formattedMonday =
+          `${monday.getFullYear()}-${String(
+            monday.getMonth() + 1
+          ).padStart(2, "0")}-${String(
+            monday.getDate()
+          ).padStart(2, "0")}`;
 
-      Object.entries(
-        storedPlanner
-      ).forEach(
-        ([day, mealsForDay]) => {
-          if (
-            !mealsForDay ||
-            typeof mealsForDay !==
-              "object" ||
-            Array.isArray(
-              mealsForDay
-            )
-          ) {
-            return;
-          }
+        const formattedSunday =
+          `${sunday.getFullYear()}-${String(
+            sunday.getMonth() + 1
+          ).padStart(2, "0")}-${String(
+            sunday.getDate()
+          ).padStart(2, "0")}`;
 
-          normalizedPlanner[day] =
-            {};
-
-          Object.entries(
-            mealsForDay as Record<
-              string,
-              unknown
-            >
-          ).forEach(
-            ([
-              meal,
-              recipesForMeal,
-            ]) => {
-              normalizedPlanner[
-                day
-              ][meal] =
-                Array.isArray(
-                  recipesForMeal
-                )
-                  ? recipesForMeal.filter(
-                      (
-                        recipeId
-                      ): recipeId is string =>
-                        typeof recipeId ===
-                        "string"
-                    )
-                  : [];
-            }
+        const {
+          data,
+          error,
+        } = await supabase
+          .from("planning")
+          .select(
+            "recipe_id, date, meal_type"
+          )
+          .eq("user_id", user.id)
+          .gte(
+            "date",
+            formattedMonday
+          )
+          .lte(
+            "date",
+            formattedSunday
           );
-        }
-      );
 
-      setPlanner(
-        normalizedPlanner
-      );
+        if (error) {
+          console.error(
+            "Error sincronizando planificación:",
+            error
+          );
+          return;
+        }
+
+        const normalized =
+          normalizeSupabasePlanner(
+            data || []
+          );
+
+        setPlanner(
+          normalized
+        );
+
+        localStorage.setItem(
+          "planner",
+          JSON.stringify(
+            normalized
+          )
+        );
+      } catch (error) {
+        console.error(
+          "Error sincronizando planner:",
+          error
+        );
+      }
     }
 
     function syncPantry() {
@@ -1535,8 +2076,8 @@ export default function RecipeDetailPage({
     }
 
     function syncFromStorage() {
-      syncFavorites();
-      syncPlanner();
+      void syncFavorites();
+      void syncPlanner();
       syncPantry();
     }
 
@@ -1794,82 +2335,260 @@ export default function RecipeDetailPage({
     );
   }
 
-  function savePlanner() {
-    const newPlanner: Planner =
-      JSON.parse(
-        JSON.stringify(planner)
-      );
+  async function savePlanner() {
+    try {
+      const numericRecipeId =
+        Number(
+          currentRecipe.id
+        );
 
-    days.forEach((day) => {
-      if (!newPlanner[day]) {
-        newPlanner[day] = {};
+      if (
+        !Number.isInteger(
+          numericRecipeId
+        ) ||
+        numericRecipeId <= 0
+      ) {
+        setSavedMessage(
+          "No se puede planificar esta receta"
+        );
+
+        setTimeout(() => {
+          setSavedMessage("");
+        }, 2200);
+
+        return;
       }
 
-      meals.forEach((meal) => {
-        const selected =
-          selectedSlots[
-            day
-          ]?.includes(meal) ||
-          false;
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-        const existing =
-          Array.isArray(
-            newPlanner[day][meal]
-          )
-            ? newPlanner[day][meal] ||
-              []
-            : [];
+      if (userError || !user) {
+        console.error(
+          "Error obteniendo usuario:",
+          userError
+        );
 
-        if (selected) {
-          if (
-            !existing.includes(
-              currentRecipe.id
-            )
-          ) {
-            newPlanner[day][
+        setSavedMessage(
+          "Necesitas iniciar sesión para planificar"
+        );
+
+        setTimeout(() => {
+          setSavedMessage("");
+        }, 2200);
+
+        return;
+      }
+
+      /*
+       * IMPORTANTE:
+       *
+       * Solo modificamos las filas de ESTA receta.
+       *
+       * Si lunes comida tiene:
+       * - Pollo al curry
+       * - Pasta cremosa
+       *
+       * y estamos editando Pasta cremosa,
+       * Pollo al curry no se toca.
+       */
+      for (
+        let dayIndex = 0;
+        dayIndex < days.length;
+        dayIndex++
+      ) {
+        const day =
+          days[dayIndex];
+
+        const formattedDate =
+          getDateForDayIndex(
+            dayIndex
+          );
+
+        for (const meal of meals) {
+          const selected =
+            selectedSlots[
+              day
+            ]?.includes(
               meal
-            ] = [
-              ...existing,
-              currentRecipe.id,
-            ];
-          }
-        } else {
-          newPlanner[day][meal] =
-            existing.filter(
-              (recipeId) =>
-                recipeId !==
-                currentRecipe.id
+            ) || false;
+
+          const {
+            error: deleteError,
+          } = await supabase
+            .from("planning")
+            .delete()
+            .eq(
+              "user_id",
+              user.id
+            )
+            .eq(
+              "recipe_id",
+              numericRecipeId
+            )
+            .eq(
+              "date",
+              formattedDate
+            )
+            .eq(
+              "meal_type",
+              meal
             );
+
+          if (deleteError) {
+            console.error(
+              "Error eliminando planificación anterior:",
+              deleteError
+            );
+
+            setSavedMessage(
+              "No se pudo guardar la planificación"
+            );
+
+            setTimeout(() => {
+              setSavedMessage("");
+            }, 2200);
+
+            return;
+          }
+
+          if (selected) {
+            const {
+              error: insertError,
+            } = await supabase
+              .from("planning")
+              .insert({
+                user_id:
+                  user.id,
+                recipe_id:
+                  numericRecipeId,
+                date: formattedDate,
+                meal_type:
+                  meal,
+              });
+
+            if (insertError) {
+              console.error(
+                "Error guardando planificación:",
+                insertError
+              );
+
+              setSavedMessage(
+                "No se pudo guardar la planificación"
+              );
+
+              setTimeout(() => {
+                setSavedMessage("");
+              }, 2200);
+
+              return;
+            }
+          }
         }
-      });
-    });
+      }
 
-    localStorage.setItem(
-      "planner",
-      JSON.stringify(
-        newPlanner
-      )
-    );
+      /*
+       * Volvemos a leer la planificación desde
+       * Supabase después de guardar.
+       *
+       * Así nos aseguramos de que la pantalla
+       * refleja exactamente lo que hay en la BD.
+       */
+      const monday =
+        getCurrentWeekMonday();
 
-    setPlanner(
-      newPlanner
-    );
+      const sunday =
+        new Date(monday);
 
-    window.dispatchEvent(
-      new Event(
-        "plannerChanged"
-      )
-    );
+      sunday.setDate(
+        monday.getDate() + 6
+      );
 
-    setShowPlanner(false);
+      const formattedMonday =
+        `${monday.getFullYear()}-${String(
+          monday.getMonth() + 1
+        ).padStart(2, "0")}-${String(
+          monday.getDate()
+        ).padStart(2, "0")}`;
 
-    setSavedMessage(
-      "Planificación guardada"
-    );
+      const formattedSunday =
+        `${sunday.getFullYear()}-${String(
+          sunday.getMonth() + 1
+        ).padStart(2, "0")}-${String(
+          sunday.getDate()
+        ).padStart(2, "0")}`;
 
-    setTimeout(() => {
-      setSavedMessage("");
-    }, 2200);
+      const {
+        data: planningData,
+        error: reloadPlanningError,
+      } = await supabase
+        .from("planning")
+        .select(
+          "recipe_id, date, meal_type"
+        )
+        .eq("user_id", user.id)
+        .gte(
+          "date",
+          formattedMonday
+        )
+        .lte(
+          "date",
+          formattedSunday
+        );
+
+      if (
+        reloadPlanningError
+      ) {
+        console.error(
+          "Error recargando planificación:",
+          reloadPlanningError
+        );
+      } else {
+        const freshPlanner =
+          normalizeSupabasePlanner(
+            planningData || []
+          );
+
+        setPlanner(
+          freshPlanner
+        );
+
+        localStorage.setItem(
+          "planner",
+          JSON.stringify(
+            freshPlanner
+          )
+        );
+      }
+
+      window.dispatchEvent(
+        new Event("plannerChanged")
+      );
+
+      setShowPlanner(false);
+
+      setSavedMessage(
+        "Planificación guardada"
+      );
+
+      setTimeout(() => {
+        setSavedMessage("");
+      }, 2200);
+    } catch (error) {
+      console.error(
+        "Error guardando planificación:",
+        error
+      );
+
+      setSavedMessage(
+        "No se pudo guardar la planificación"
+      );
+
+      setTimeout(() => {
+        setSavedMessage("");
+      }, 2200);
+    }
   }
 
   function startEditing(
@@ -2033,29 +2752,49 @@ export default function RecipeDetailPage({
     const numericId = Number(
       cleanedRecipe.id
     );
+    let ingredientRelationFailed = false;
 
     if (
-      Number.isInteger(numericId) &&
+      Number.isInteger(
+        numericId
+      ) &&
       numericId > 0
     ) {
-      const categoryMap: Record<
-        string,
-        number
-      > = {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        setSavedMessage(
+          "Necesitas iniciar sesión"
+        );
+
+        setTimeout(() => {
+          setSavedMessage("");
+        }, 2200);
+
+        return;
+      }
+
+      const categoryMap: Record<string, number> = {
+        Desayuno: 1,
+        Comida: 2,
+        Cena: 3,
+        Postres: 4,
+        Snacks: 5,
         Ensaladas: 6,
         Pasta: 7,
         Arroces: 8,
+        Arroz: 8,
+        Carne: 9,
         Carnes: 9,
+        Pescado: 10,
         Pescados: 10,
         Legumbres: 11,
-        Huevos: 12,
         Otros: 12,
       };
 
-      const categoryId =
-        categoryMap[
-          cleanedRecipe.category
-        ] || 12;
+      const categoryId = categoryMap[cleanedRecipe.category] ?? 12;
 
       const {
         error: recipeError,
@@ -2069,6 +2808,8 @@ export default function RecipeDetailPage({
           preparation_time:
             cleanedRecipe.time ||
             null,
+          difficulty:
+            cleanedRecipe.difficulty || null,
           servings:
             cleanedRecipe.servings ||
             null,
@@ -2079,7 +2820,14 @@ export default function RecipeDetailPage({
           category_id:
             categoryId,
         })
-        .eq("id", numericId);
+        .eq(
+          "id",
+          numericId
+        )
+        .eq(
+          "user_id",
+          user.id
+        );
 
       if (recipeError) {
         console.error(
@@ -2099,7 +2847,8 @@ export default function RecipeDetailPage({
       }
 
       const {
-        error: deleteIngredientsError,
+        error:
+          deleteIngredientsError,
       } = await supabase
         .from("recipe_ingredients")
         .delete()
@@ -2109,10 +2858,13 @@ export default function RecipeDetailPage({
         );
 
       if (deleteIngredientsError) {
-        console.error(
-          "Error actualizando ingredientes:",
-          deleteIngredientsError
-        );
+        ingredientRelationFailed = true;
+        console.error("Error actualizando ingredientes:", {
+          code: deleteIngredientsError.code,
+          message: deleteIngredientsError.message,
+          details: deleteIngredientsError.details,
+          hint: deleteIngredientsError.hint,
+        });
       } else {
         for (const ingredient of cleanedRecipe.ingredients) {
           const parsed =
@@ -2132,7 +2884,8 @@ export default function RecipeDetailPage({
             | null = null;
 
           const {
-            data: existingIngredient,
+            data:
+              existingIngredient,
             error:
               existingIngredientError,
           } = await supabase
@@ -2155,8 +2908,7 @@ export default function RecipeDetailPage({
           }
 
           if (
-            existingIngredient
-              ?.id
+            existingIngredient?.id
           ) {
             ingredientId =
               existingIngredient.id;
@@ -2173,11 +2925,16 @@ export default function RecipeDetailPage({
               .select("id")
               .single();
 
-            if (newIngredientError) {
-              console.error(
-                "Error creando ingrediente:",
-                newIngredientError
-              );
+            if (
+              newIngredientError
+            ) {
+              ingredientRelationFailed = true;
+              console.error("Error creando ingrediente:", {
+                code: newIngredientError.code,
+                message: newIngredientError.message,
+                details: newIngredientError.details,
+                hint: newIngredientError.hint,
+              });
               continue;
             }
 
@@ -2201,6 +2958,7 @@ export default function RecipeDetailPage({
                   numericId,
                 ingredient_id:
                   ingredientId,
+                display_name: ingredientName,
                 quantity:
                   parsed.quantity !==
                   null
@@ -2211,13 +2969,14 @@ export default function RecipeDetailPage({
                   null,
               });
 
-            if (
-              relationError
-            ) {
-              console.error(
-                "Error guardando relación de ingrediente:",
-                relationError
-              );
+            if (relationError) {
+              ingredientRelationFailed = true;
+              console.error("Error guardando relación de ingrediente:", {
+                code: relationError.code,
+                message: relationError.message,
+                details: relationError.details,
+                hint: relationError.hint,
+              });
             }
           }
         }
@@ -2316,7 +3075,9 @@ export default function RecipeDetailPage({
     setEditRecipe(null);
 
     setSavedMessage(
-      "Receta guardada"
+      ingredientRelationFailed
+        ? "Receta guardada, pero hubo un problema con algunos ingredientes. Mira la consola."
+        : "Receta guardada"
     );
 
     setTimeout(() => {
@@ -2330,15 +3091,40 @@ export default function RecipeDetailPage({
     );
 
     if (
-      Number.isInteger(numericId) &&
+      Number.isInteger(
+        numericId
+      ) &&
       numericId > 0
     ) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        setSavedMessage(
+          "Necesitas iniciar sesión"
+        );
+
+        setTimeout(() => {
+          setSavedMessage("");
+        }, 2200);
+
+        return;
+      }
+
       const {
         error,
       } = await supabase
         .from("recipes")
         .delete()
-        .eq("id", numericId);
+        .eq(
+          "id",
+          numericId
+        )
+        .eq(
+          "user_id",
+          user.id
+        );
 
       if (error) {
         console.error(
@@ -3122,24 +3908,24 @@ export default function RecipeDetailPage({
 
             <div className="mt-6 flex gap-3">
               <button
-                onClick={() =>
-                  setShowPlanner(
-                    false
-                  )
-                }
-                className="flex-1 rounded-2xl bg-white px-5 py-4 text-sm font-semibold text-[#68736B]"
-              >
-                Cancelar
-              </button>
+  onClick={() =>
+    setShowPlanner(
+      false
+    )
+  }
+  className="flex-1 rounded-2xl bg-white px-5 py-4 text-sm font-semibold text-[#68736B] transition hover:bg-[#E8E6DF] active:bg-[#DCD9D1]"
+>
+  Cancelar
+</button>
 
-              <button
-                onClick={
-                  savePlanner
-                }
-                className="flex-1 rounded-2xl bg-[#52685A] px-5 py-4 text-sm font-semibold text-white"
-              >
-                Guardar
-              </button>
+<button
+  onClick={
+    savePlanner
+  }
+  className="flex-1 rounded-2xl bg-[#52685A] px-5 py-4 text-sm font-semibold text-white transition hover:bg-[#45594C] active:bg-[#394A40]"
+>
+  Guardar
+</button>
             </div>
           </div>
         </div>

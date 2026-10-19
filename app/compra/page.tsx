@@ -3,216 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
-const days = [
-  "Lunes",
-  "Martes",
-  "Miércoles",
-  "Jueves",
-  "Viernes",
-  "Sábado",
-  "Domingo",
-];
-
-const meals = ["Comida", "Cena"];
-
-type Recipe = {
-  id: string;
-  name: string;
-  emoji?: string;
-  ingredients: string[];
-};
-
-type Planner = {
-  [day: string]: {
-    [meal: string]: string | string[] | null;
-  };
-};
-
-type ShoppingItem = {
-  id: string;
-  name: string;
-  recipes: string[];
-  category: string;
-  quantity: number | null;
-  totalQuantity: number | null;
-  unit: string | null;
-  ingredientName?: string;
-  owned?: boolean;
-  pantryQuantity?: number | null;
-  pantryUnit?: string | null;
-};
-
-type PantryItem = {
-  id: string;
-  name: string;
-  quantity: number | null;
-  unit: string | null;
-};
-
-const baseRecipes: Record<string, Recipe> = {
-  "pasta-cremosa": {
-    id: "pasta-cremosa",
-    name: "Pasta cremosa",
-    emoji: "🍝",
-    ingredients: [
-      "200 g de pasta",
-      "200 ml de nata para cocinar",
-      "100 g de queso parmesano",
-      "1 cebolla",
-      "2 dientes de ajo",
-      "Aceite de oliva",
-      "Sal",
-      "Pimienta",
-    ],
-  },
-
-  "ensalada-mediterranea": {
-    id: "ensalada-mediterranea",
-    name: "Ensalada mediterránea",
-    emoji: "🥗",
-    ingredients: [
-      "2 tomates",
-      "1 pepino",
-      "100 g de queso feta",
-      "50 g de aceitunas",
-      "1/2 cebolla",
-      "Aceite de oliva",
-      "Sal",
-    ],
-  },
-
-  "arroz-con-verduras": {
-    id: "arroz-con-verduras",
-    name: "Arroz con verduras",
-    emoji: "🍚",
-    ingredients: [
-      "200 g de arroz",
-      "1 zanahoria",
-      "1 calabacín",
-      "1 pimiento",
-      "1 cebolla",
-      "Aceite de oliva",
-      "Sal",
-    ],
-  },
-
-  "lentejas-caseras": {
-    id: "lentejas-caseras",
-    name: "Lentejas caseras",
-    emoji: "🥣",
-    ingredients: [
-      "250 g de lentejas",
-      "1 zanahoria",
-      "1 patata",
-      "1 cebolla",
-      "1 tomate",
-      "1 diente de ajo",
-      "Aceite de oliva",
-      "Sal",
-    ],
-  },
-
-  "pollo-al-horno": {
-    id: "pollo-al-horno",
-    name: "Pollo al horno",
-    emoji: "🍗",
-    ingredients: [
-      "2 pechugas de pollo",
-      "3 patatas",
-      "1 cebolla",
-      "Aceite de oliva",
-      "Sal",
-      "Pimienta",
-    ],
-  },
-
-  "salmon-con-patata": {
-    id: "salmon-con-patata",
-    name: "Salmón con patata",
-    emoji: "🐟",
-    ingredients: [
-      "2 lomos de salmón",
-      "3 patatas",
-      "1 limón",
-      "Aceite de oliva",
-      "Sal",
-      "Pimienta",
-    ],
-  },
-
-  "tortilla-de-patata": {
-    id: "tortilla-de-patata",
-    name: "Tortilla de patata",
-    emoji: "🥔",
-    ingredients: [
-      "5 patatas",
-      "1 cebolla",
-      "6 huevos",
-      "Aceite de oliva",
-      "Sal",
-    ],
-  },
-
-  "pollo-al-curry": {
-    id: "pollo-al-curry",
-    name: "Pollo al curry",
-    emoji: "🍛",
-    ingredients: [
-      "2 pechugas de pollo",
-      "200 ml de leche de coco",
-      "1 cebolla",
-      "2 dientes de ajo",
-      "Curry",
-      "Aceite de oliva",
-      "Sal",
-    ],
-  },
-
-  "garbanzos-con-verduras": {
-    id: "garbanzos-con-verduras",
-    name: "Garbanzos con verduras",
-    emoji: "🥘",
-    ingredients: [
-      "400 g de garbanzos cocidos",
-      "1 zanahoria",
-      "1 calabacín",
-      "1 cebolla",
-      "1 pimiento",
-      "Aceite de oliva",
-      "Sal",
-    ],
-  },
-
-  "merluza-al-horno": {
-    id: "merluza-al-horno",
-    name: "Merluza al horno",
-    emoji: "🐟",
-    ingredients: [
-      "2 lomos de merluza",
-      "3 patatas",
-      "1 cebolla",
-      "1 limón",
-      "Aceite de oliva",
-      "Sal",
-      "Pimienta",
-    ],
-  },
-
-  "pollo-en-salsa": {
-    id: "pollo-en-salsa",
-    name: "Pollo en salsa",
-    emoji: "🍗",
-    ingredients: [
-      "2 pechugas de pollo",
-      "1 cebolla",
-      "2 dientes de ajo",
-      "200 ml de caldo de pollo",
-      "Aceite de oliva",
-      "Sal",
-      "Pimienta",
-    ],
-  },
-};
+import { supabase } from "@/lib/supabase";
 
 const categories = [
   "Frutas y verduras",
@@ -223,263 +14,61 @@ const categories = [
   "Condimentos",
 ];
 
-function getCategory(name: string): string {
-  const lower = name.toLowerCase();
+type Recipe = {
+  id: string;
+  name: string;
+  emoji?: string;
+};
 
-  if (
-    [
-      "tomate",
-      "tomates",
-      "cebolla",
-      "cebollas",
-      "zanahoria",
-      "zanahorias",
-      "calabacín",
-      "calabacines",
-      "pimiento",
-      "pimientos",
-      "pepino",
-      "pepinos",
-      "patata",
-      "patatas",
-      "limón",
-      "limones",
-    ].some((word) => lower.includes(word))
-  ) {
-    return "Frutas y verduras";
-  }
+type RecipeIngredientRow = {
+  recipe_id: number;
+  ingredient_id: number;
+  quantity: number | null;
+  unit: string | null;
+};
 
-  if (
-    ["pollo", "pechuga", "pechugas", "carne", "ternera", "cerdo"].some(
-      (word) => lower.includes(word)
-    )
-  ) {
-    return "Carnicería";
-  }
+type IngredientRow = {
+  id: number;
+  name: string;
+};
 
-  if (
-    ["salmón", "salmon", "merluza", "pescado", "bacalao"].some((word) =>
-      lower.includes(word)
-    )
-  ) {
-    return "Pescadería";
-  }
+type ShoppingItem = {
+  id: string;
+  ingredientId: number;
+  name: string;
+  ingredientName: string;
+  recipes: string[];
+  category: string;
+  quantity: number | null;
+  totalQuantity: number | null;
+  unit: string | null;
+  owned?: boolean;
+  pantryQuantity?: number | null;
+  pantryUnit?: string | null;
+  source: "recipe" | "manual";
+};
 
-  if (
-    ["nata", "queso", "leche", "yogur", "yogurt", "parmesano", "feta"].some(
-      (word) => lower.includes(word)
-    )
-  ) {
-    return "Lácteos";
-  }
-
-  if (
-    [
-      "pasta",
-      "arroz",
-      "lentejas",
-      "garbanzos",
-      "harina",
-      "azúcar",
-      "aceitunas",
-      "leche de coco",
-      "coco",
-      "caldo",
-      "huevo",
-      "huevos",
-    ].some((word) => lower.includes(word))
-  ) {
-    return "Despensa";
-  }
-
-  return "Condimentos";
-}
-
-function parseFraction(value: string): number | null {
-  const trimmed = value.trim();
-
-  if (/^\d+\s*\/\s*\d+$/.test(trimmed)) {
-    const [numerator, denominator] = trimmed.split("/").map(Number);
-
-    if (denominator !== 0) {
-      return numerator / denominator;
-    }
-  }
-
-  return null;
-}
-
-function formatNumber(value: number): string {
-  if (Number.isInteger(value)) {
-    return String(value);
-  }
-
-  return value
-    .toFixed(2)
-    .replace(/\.00$/, "")
-    .replace(/(\.\d)0$/, "$1")
-    .replace(".", ",");
-}
-
-function normalizeIngredientName(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, " ")
-    .replace(/[.,;:]+$/, "");
-}
-
-function getComparableIngredientName(name: string): string {
-  let result = normalizeIngredientName(name);
-
-  result = result
-    .replace(/^(un|una|unos|unas)\s+/i, "")
-    .replace(
-      /^(dientes?|lomos?|filetes?|rodajas?|ramas?|cucharaditas?|cucharadas?|tazas?|vasos?)\s+de\s+/i,
-      ""
-    )
-    .replace(/^de\s+/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (result.endsWith("es") && result.length > 4) {
-    result = result.slice(0, -2);
-  } else if (result.endsWith("s") && result.length > 3) {
-    result = result.slice(0, -1);
-  }
-
-  return result;
-}
-
-function parseIngredient(
-  ingredient: string
-): {
+type PantryItem = {
+  id: string;
+  ingredientId: number;
   name: string;
   quantity: number | null;
   unit: string | null;
-} {
-  let text = ingredient.trim();
+};
 
-  text = text.replace(/^[-•*]\s*/, "");
+type StoredShoppingRow = {
+  id: number;
+  ingredient_id: number;
+  name: string;
+  quantity: number | null;
+  unit: string | null;
+  checked: boolean;
+};
 
-  const mixedFractionMatch = text.match(
-    /^(\d+)\s+(\d+)\s*\/\s*(\d+)\s+(.+)$/
-  );
-
-  if (mixedFractionMatch) {
-    const whole = Number(mixedFractionMatch[1]);
-    const numerator = Number(mixedFractionMatch[2]);
-    const denominator = Number(mixedFractionMatch[3]);
-
-    return {
-      quantity:
-        denominator !== 0 ? whole + numerator / denominator : whole,
-      unit: null,
-      name: mixedFractionMatch[4].trim(),
-    };
-  }
-
-  const fractionOnlyMatch = text.match(
-    /^(\d+)\s*\/\s*(\d+)\s+(.+)$/
-  );
-
-  if (fractionOnlyMatch) {
-    const numerator = Number(fractionOnlyMatch[1]);
-    const denominator = Number(fractionOnlyMatch[2]);
-
-    return {
-      quantity: denominator !== 0 ? numerator / denominator : null,
-      unit: null,
-      name: fractionOnlyMatch[3].trim(),
-    };
-  }
-
-  const quantityMatch = text.match(/^(\d+(?:[.,]\d+)?)\s+(.+)$/);
-
-  if (!quantityMatch) {
-    return {
-      name: text,
-      quantity: null,
-      unit: null,
-    };
-  }
-
-  const quantity = Number(quantityMatch[1].replace(",", "."));
-  const rest = quantityMatch[2].trim();
-
-  const unitMatch = rest.match(
-    /^([a-zA-ZÀ-ÿ]+)\s+(?:de\s+|del\s+)?(.+)$/
-  );
-
-  if (!unitMatch) {
-    return {
-      name: rest,
-      quantity,
-      unit: null,
-    };
-  }
-
-  const possibleUnit = unitMatch[1].toLowerCase();
-
-  const knownUnits = [
-    "g",
-    "gr",
-    "gramo",
-    "gramos",
-    "kg",
-    "kilo",
-    "kilos",
-    "kilogramo",
-    "kilogramos",
-    "ml",
-    "l",
-    "litro",
-    "litros",
-    "cl",
-    "unidad",
-    "unidades",
-    "ud",
-    "uds",
-    "cucharadita",
-    "cucharaditas",
-    "cucharada",
-    "cucharadas",
-    "taza",
-    "tazas",
-    "vaso",
-    "vasos",
-  ];
-
-  if (!knownUnits.includes(possibleUnit)) {
-    return {
-      name: rest,
-      quantity,
-      unit: null,
-    };
-  }
-
-  return {
-    name: unitMatch[2].trim(),
-    quantity,
-    unit: normalizeUnit(possibleUnit),
-  };
-}
-
-function formatShoppingName(
-  name: string,
-  quantity: number | null,
-  unit: string | null
-): string {
-  if (quantity === null) {
-    return name;
-  }
-
-  if (unit) {
-    return `${formatNumber(quantity)} ${unit} de ${name}`;
-  }
-
-  return `${formatNumber(quantity)} ${name}`;
-}
+type RelationRow = {
+  shopping_list_id: number;
+  recipe_id: number;
+};
 
 function normalizeUnit(unit: string | null): string | null {
   if (!unit) {
@@ -531,6 +120,163 @@ function normalizeUnit(unit: string | null): string | null {
   }
 
   return value;
+}
+
+function formatNumber(value: number): string {
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+
+  return value
+    .toFixed(2)
+    .replace(/\.00$/, "")
+    .replace(/(\.\d)0$/, "$1")
+    .replace(".", ",");
+}
+
+function getComparableIngredientName(name: string): string {
+  let result = name
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[.,;:]+$/, "");
+
+  result = result
+    .replace(/^(un|una|unos|unas)\s+/i, "")
+    .replace(
+      /^(dientes?|lomos?|filetes?|rodajas?|ramas?|cucharaditas?|cucharadas?|tazas?|vasos?)\s+de\s+/i,
+      ""
+    )
+    .replace(/^de\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (result.endsWith("es") && result.length > 4) {
+    result = result.slice(0, -2);
+  } else if (result.endsWith("s") && result.length > 3) {
+    result = result.slice(0, -1);
+  }
+
+  return result;
+}
+
+function getCategory(name: string): string {
+  const lower = name.toLowerCase();
+
+  if (
+    [
+      "tomate",
+      "tomates",
+      "cebolla",
+      "cebollas",
+      "zanahoria",
+      "zanahorias",
+      "calabacín",
+      "calabacines",
+      "pimiento",
+      "pimientos",
+      "pepino",
+      "pepinos",
+      "patata",
+      "patatas",
+      "limón",
+      "limones",
+      "champiñón",
+      "champiñones",
+      "seta",
+      "setas",
+      "lechuga",
+      "espinaca",
+      "espinacas",
+      "ajo",
+      "ajos",
+      "brócoli",
+      "brócolis",
+      "calabaza",
+      "berenjena",
+      "berenjenas",
+    ].some((word) => lower.includes(word))
+  ) {
+    return "Frutas y verduras";
+  }
+
+  if (
+    [
+      "pollo",
+      "pechuga",
+      "pechugas",
+      "carne",
+      "ternera",
+      "cerdo",
+      "jamón",
+      "jamon",
+      "pavo",
+      "salchicha",
+      "salchichas",
+    ].some((word) => lower.includes(word))
+  ) {
+    return "Carnicería";
+  }
+
+  if (
+    [
+      "salmón",
+      "salmon",
+      "merluza",
+      "pescado",
+      "bacalao",
+      "atún",
+      "atun",
+      "gamba",
+      "gambas",
+      "langostino",
+      "langostinos",
+    ].some((word) => lower.includes(word))
+  ) {
+    return "Pescadería";
+  }
+
+  if (
+    [
+      "nata",
+      "queso",
+      "leche",
+      "yogur",
+      "yogurt",
+      "parmesano",
+      "feta",
+      "mozzarella",
+      "mantequilla",
+    ].some((word) => lower.includes(word))
+  ) {
+    return "Lácteos";
+  }
+
+  if (
+    [
+      "pasta",
+      "arroz",
+      "lentejas",
+      "garbanzos",
+      "harina",
+      "azúcar",
+      "azucar",
+      "aceitunas",
+      "leche de coco",
+      "coco",
+      "caldo",
+      "huevo",
+      "huevos",
+      "pan",
+      "pan rallado",
+      "avena",
+      "fideos",
+    ].some((word) => lower.includes(word))
+  ) {
+    return "Despensa";
+  }
+
+  return "Condimentos";
 }
 
 function convertToBaseQuantity(
@@ -635,180 +381,64 @@ function pantryMatchesIngredient(
   );
 }
 
-function normalizePlanner(raw: unknown): Planner {
-  const result: Planner = {};
-
-  for (const day of days) {
-    result[day] = {};
-
-    for (const meal of meals) {
-      result[day][meal] = null;
-    }
+function formatShoppingName(
+  name: string,
+  quantity: number | null,
+  unit: string | null
+): string {
+  if (quantity === null) {
+    return name;
   }
 
-  if (!raw || typeof raw !== "object") {
-    return result;
+  if (unit) {
+    return `${formatNumber(quantity)} ${unit} de ${name}`;
   }
 
-  const input = raw as Record<string, unknown>;
+  return `${formatNumber(quantity)} ${name}`;
+}
 
-  for (const day of days) {
-    const dayValue = input[day];
+function getMonday(date: Date): Date {
+  const result = new Date(date);
 
-    if (!dayValue || typeof dayValue !== "object") {
-      continue;
-    }
+  result.setHours(0, 0, 0, 0);
 
-    const dayObject = dayValue as Record<string, unknown>;
+  const day = result.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
 
-    for (const meal of meals) {
-      const value = dayObject[meal];
-
-      if (
-        typeof value === "string" ||
-        value === null ||
-        Array.isArray(value)
-      ) {
-        result[day][meal] = value as string | string[] | null;
-      }
-    }
-  }
+  result.setDate(result.getDate() + diff);
 
   return result;
 }
 
-function loadRecipesFromStorage(): Record<string, Recipe> {
-  const result = { ...baseRecipes };
+function formatDateForDatabase(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
 
-  try {
-    const savedRecipes = JSON.parse(
-      localStorage.getItem("recipes") || "[]"
-    );
-
-    if (Array.isArray(savedRecipes)) {
-      savedRecipes.forEach((recipe) => {
-        if (
-          recipe &&
-          typeof recipe.id === "string" &&
-          typeof recipe.name === "string" &&
-          Array.isArray(recipe.ingredients)
-        ) {
-          result[recipe.id] = {
-            id: recipe.id,
-            name: recipe.name,
-            emoji: recipe.emoji || "🍽️",
-            ingredients: recipe.ingredients.filter(
-              (
-                ingredient: unknown
-              ): ingredient is string =>
-                typeof ingredient === "string"
-            ),
-          };
-        }
-      });
-    }
-  } catch {}
-
-  try {
-    const importedRecipes = JSON.parse(
-      localStorage.getItem("importedRecipes") || "[]"
-    );
-
-    if (Array.isArray(importedRecipes)) {
-      importedRecipes.forEach((recipe) => {
-        if (
-          recipe &&
-          typeof recipe.id === "string" &&
-          typeof recipe.name === "string" &&
-          Array.isArray(recipe.ingredients)
-        ) {
-          result[recipe.id] = {
-            id: recipe.id,
-            name: recipe.name,
-            emoji: recipe.emoji || "🍽️",
-            ingredients: recipe.ingredients.filter(
-              (
-                ingredient: unknown
-              ): ingredient is string =>
-                typeof ingredient === "string"
-            ),
-          };
-        }
-      });
-    }
-  } catch {}
-
-  return result;
+  return `${year}-${month}-${day}`;
 }
 
-function loadPantry(): PantryItem[] {
-  try {
-    const raw = JSON.parse(
-      localStorage.getItem("pantryItems") || "[]"
-    );
+function getWeekRange() {
+  const monday = getMonday(new Date());
+  const sunday = new Date(monday);
 
-    if (!Array.isArray(raw)) {
-      return [];
-    }
+  sunday.setDate(monday.getDate() + 6);
 
-    return raw
-      .filter(
-        (item) => item && typeof item.name === "string"
-      )
-      .map((item) => ({
-        id:
-          typeof item.id === "string"
-            ? item.id
-            : `${item.name}-${Math.random()}`,
-        name: item.name,
-        quantity:
-          typeof item.quantity === "number"
-            ? item.quantity
-            : null,
-        unit: normalizeUnit(
-          typeof item.unit === "string"
-            ? item.unit
-            : null
-        ),
-      }));
-  } catch {
-    return [];
-  }
-}
-
-function loadCheckedItems(): string[] {
-  try {
-    const raw = JSON.parse(
-      localStorage.getItem("shoppingChecked") || "[]"
-    );
-
-    if (!Array.isArray(raw)) {
-      return [];
-    }
-
-    return raw.filter(
-      (item): item is string => typeof item === "string"
-    );
-  } catch {
-    return [];
-  }
+  return {
+    monday: formatDateForDatabase(monday),
+    sunday: formatDateForDatabase(sunday),
+  };
 }
 
 export default function ShoppingPage() {
-  const [planner, setPlanner] = useState<Planner>(
-    () => normalizePlanner(null)
-  );
+  const [availableRecipes, setAvailableRecipes] = useState<
+    Record<string, Recipe>
+  >({});
 
-  const [availableRecipes, setAvailableRecipes] =
-    useState<Record<string, Recipe>>({});
+  const [shoppingItems, setShoppingItems] = useState<ShoppingItem[]>([]);
+  const [checkedItems, setCheckedItems] = useState<string[]>([]);
 
-  const [checkedItems, setCheckedItems] = useState<string[]>(
-    []
-  );
-
-  const [pantryItems, setPantryItems] = useState<PantryItem[]>(
-    []
-  );
+  const [pantryItems, setPantryItems] = useState<PantryItem[]>([]);
 
   const [showPantry, setShowPantry] = useState(false);
 
@@ -816,67 +446,763 @@ export default function ShoppingPage() {
   const [pantryQuantity, setPantryQuantity] = useState("");
   const [pantryUnit, setPantryUnit] = useState("");
 
-  const [editingPantryId, setEditingPantryId] =
-    useState<string | null>(null);
+  const [editingPantryId, setEditingPantryId] = useState<string | null>(
+    null
+  );
 
-  const [dataLoaded, setDataLoaded] = useState(false);
+  const [manualName, setManualName] = useState("");
+  const [manualQuantity, setManualQuantity] = useState("");
+  const [manualUnit, setManualUnit] = useState("");
+  const [addingManual, setAddingManual] = useState(false);
 
-  function reloadPlanner() {
+  const [activeList, setActiveList] = useState<"recipe" | "manual">(
+    "recipe"
+  );
+
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  async function loadData() {
+    setLoading(true);
+    setErrorMessage("");
+
     try {
-      const storedPlanner = localStorage.getItem("planner");
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-      setPlanner(
-        normalizePlanner(
-          storedPlanner ? JSON.parse(storedPlanner) : null
+      if (userError) {
+        throw userError;
+      }
+
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+
+      /*
+       * -------------------------------------------------------------
+       * 1. RECETAS DEL USUARIO
+       * -------------------------------------------------------------
+       */
+
+      const { data: recipesData, error: recipesError } = await supabase
+        .from("recipes")
+        .select("id, title")
+        .eq("user_id", user.id);
+
+      if (recipesError) {
+        throw recipesError;
+      }
+
+      const recipeMap: Record<string, Recipe> = {};
+
+      for (const recipe of recipesData || []) {
+        recipeMap[String(recipe.id)] = {
+          id: String(recipe.id),
+          name: recipe.title,
+          emoji: "🍽️",
+        };
+      }
+
+      setAvailableRecipes(recipeMap);
+
+      /*
+       * -------------------------------------------------------------
+       * 2. PLANIFICACIÓN DE ESTA SEMANA
+       * -------------------------------------------------------------
+       */
+
+      const { monday, sunday } = getWeekRange();
+
+      const { data: planningData, error: planningError } =
+        await supabase
+          .from("planning")
+          .select("recipe_id, date, meal_type")
+          .eq("user_id", user.id)
+          .gte("date", monday)
+          .lte("date", sunday);
+
+      if (planningError) {
+        throw planningError;
+      }
+
+      const plannedRecipeIds = [
+        ...new Set(
+          (planningData || [])
+            .map((row) => Number(row.recipe_id))
+            .filter((id) => Number.isFinite(id))
+        ),
+      ];
+
+      /*
+       * -------------------------------------------------------------
+       * 3. INGREDIENTES DE LAS RECETAS PLANIFICADAS
+       * -------------------------------------------------------------
+       */
+
+      let recipeIngredients: RecipeIngredientRow[] = [];
+
+      if (plannedRecipeIds.length > 0) {
+        const {
+          data: recipeIngredientsData,
+          error: recipeIngredientsError,
+        } = await supabase
+          .from("recipe_ingredients")
+          .select("recipe_id, ingredient_id, quantity, unit")
+          .in("recipe_id", plannedRecipeIds);
+
+        if (recipeIngredientsError) {
+          throw recipeIngredientsError;
+        }
+
+        recipeIngredients =
+          (recipeIngredientsData || []) as RecipeIngredientRow[];
+      }
+
+      /*
+       * -------------------------------------------------------------
+       * 4. NOMBRES DE LOS INGREDIENTES
+       * -------------------------------------------------------------
+       */
+
+      const ingredientIds = [
+        ...new Set(
+          recipeIngredients
+            .map((row) => Number(row.ingredient_id))
+            .filter((id) => Number.isFinite(id))
+        ),
+      ];
+
+      let ingredients: IngredientRow[] = [];
+
+      if (ingredientIds.length > 0) {
+        const { data: ingredientsData, error: ingredientsError } =
+          await supabase
+            .from("ingredients")
+            .select("id, name")
+            .in("id", ingredientIds);
+
+        if (ingredientsError) {
+          throw ingredientsError;
+        }
+
+        ingredients = (ingredientsData || []) as IngredientRow[];
+      }
+
+      const ingredientNameMap = new Map<number, string>();
+
+      for (const ingredient of ingredients) {
+        ingredientNameMap.set(
+          Number(ingredient.id),
+          ingredient.name
+        );
+      }
+
+      /*
+       * -------------------------------------------------------------
+       * 5. GENERAMOS LA LISTA DE RECETAS
+       * -------------------------------------------------------------
+       */
+
+      const generatedMap = new Map<string, ShoppingItem>();
+
+      for (const plannedRecipeId of plannedRecipeIds) {
+        const recipe = recipeMap[String(plannedRecipeId)];
+
+        if (!recipe) {
+          continue;
+        }
+
+        const recipeIngredientRows = recipeIngredients.filter(
+          (row) => Number(row.recipe_id) === plannedRecipeId
+        );
+
+        for (const row of recipeIngredientRows) {
+          const ingredientName =
+            ingredientNameMap.get(Number(row.ingredient_id)) ||
+            "Ingrediente";
+
+          const unit = normalizeUnit(row.unit);
+          const key = String(row.ingredient_id);
+
+          const existing = generatedMap.get(key);
+
+          if (!existing) {
+            generatedMap.set(key, {
+              id: `ingredient-${row.ingredient_id}`,
+              ingredientId: Number(row.ingredient_id),
+              name: formatShoppingName(
+                ingredientName,
+                row.quantity,
+                unit
+              ),
+              ingredientName,
+              recipes: [recipe.name],
+              category: getCategory(ingredientName),
+              quantity: row.quantity,
+              totalQuantity: row.quantity,
+              unit,
+              source: "recipe",
+            });
+
+            continue;
+          }
+
+          if (
+            existing.quantity !== null &&
+            row.quantity !== null &&
+            unitsAreCompatible(existing.unit, unit)
+          ) {
+            const existingBase = convertToBaseQuantity(
+              existing.quantity,
+              existing.unit
+            );
+
+            const newBase = convertToBaseQuantity(
+              row.quantity,
+              unit
+            );
+
+            if (existingBase.unit === newBase.unit) {
+              const totalBase =
+                existingBase.quantity + newBase.quantity;
+
+              const total = convertFromBaseQuantity(
+                totalBase,
+                existing.unit
+              );
+
+              existing.quantity = total;
+              existing.totalQuantity = total;
+
+              existing.name = formatShoppingName(
+                existing.ingredientName,
+                total,
+                existing.unit
+              );
+            }
+          }
+
+          if (!existing.recipes.includes(recipe.name)) {
+            existing.recipes.push(recipe.name);
+          }
+        }
+      }
+
+      /*
+       * -------------------------------------------------------------
+       * 6. DESPENSA
+       * -------------------------------------------------------------
+       */
+
+      const { data: pantryData, error: pantryError } = await supabase
+        .from("pantry")
+        .select("id, ingredient_id, quantity, unit")
+        .eq("user_id", user.id);
+
+      if (pantryError) {
+        throw pantryError;
+      }
+
+      const pantryIngredientIds = [
+        ...new Set(
+          (pantryData || [])
+            .map((item) => Number(item.ingredient_id))
+            .filter((id) => Number.isFinite(id))
+        ),
+      ];
+
+      let pantryIngredientNames: IngredientRow[] = [];
+
+      if (pantryIngredientIds.length > 0) {
+        const {
+          data: pantryIngredientsData,
+          error: pantryIngredientsError,
+        } = await supabase
+          .from("ingredients")
+          .select("id, name")
+          .in("id", pantryIngredientIds);
+
+        if (pantryIngredientsError) {
+          throw pantryIngredientsError;
+        }
+
+        pantryIngredientNames =
+          (pantryIngredientsData || []) as IngredientRow[];
+      }
+
+      const pantryNameMap = new Map<number, string>();
+
+      for (const ingredient of pantryIngredientNames) {
+        pantryNameMap.set(
+          Number(ingredient.id),
+          ingredient.name
+        );
+      }
+
+      const loadedPantry: PantryItem[] = (pantryData || []).map(
+        (item) => ({
+          id: String(item.id),
+          ingredientId: Number(item.ingredient_id),
+          name:
+            pantryNameMap.get(Number(item.ingredient_id)) ||
+            "Ingrediente",
+          quantity:
+            item.quantity !== null
+              ? Number(item.quantity)
+              : null,
+          unit: normalizeUnit(item.unit),
+        })
+      );
+
+      setPantryItems(loadedPantry);
+
+      /*
+       * -------------------------------------------------------------
+       * 7. LISTA DE COMPRA EXISTENTE
+       * -------------------------------------------------------------
+       */
+
+      const {
+        data: existingShoppingData,
+        error: shoppingError,
+      } = await supabase
+        .from("shopping_list")
+        .select(
+          "id, ingredient_id, name, quantity, unit, checked"
+        )
+        .eq("user_id", user.id);
+
+      if (shoppingError) {
+        throw shoppingError;
+      }
+
+      const existingShopping =
+        (existingShoppingData || []) as StoredShoppingRow[];
+
+      /*
+       * -------------------------------------------------------------
+       * 8. SABEMOS CUÁLES SON MANUALES Y CUÁLES DE RECETAS
+       * -------------------------------------------------------------
+       */
+
+      const existingShoppingIds = existingShopping
+        .map((item) => Number(item.id))
+        .filter((id) => Number.isFinite(id));
+
+      let existingRelations: RelationRow[] = [];
+
+      if (existingShoppingIds.length > 0) {
+        const {
+          data: relationsData,
+          error: relationsError,
+        } = await supabase
+          .from("shopping_list_recipes")
+          .select("shopping_list_id, recipe_id")
+          .in("shopping_list_id", existingShoppingIds);
+
+        if (relationsError) {
+          throw relationsError;
+        }
+
+        existingRelations = (relationsData || []) as RelationRow[];
+      }
+
+      const generatedShoppingIds = new Set(
+        existingRelations.map((row) =>
+          Number(row.shopping_list_id)
         )
       );
-    } catch {
-      setPlanner(normalizePlanner(null));
+
+      /*
+       * Los productos que NO tienen relación con una receta
+       * son productos añadidos manualmente.
+       */
+
+      const manualItems: ShoppingItem[] = existingShopping
+        .filter(
+          (item) =>
+            !generatedShoppingIds.has(Number(item.id))
+        )
+        .map((item) => ({
+          id: String(item.id),
+          ingredientId: Number(item.ingredient_id),
+          name: formatShoppingName(
+            item.name,
+            item.quantity !== null
+              ? Number(item.quantity)
+              : null,
+            normalizeUnit(item.unit)
+          ),
+          ingredientName: item.name,
+          recipes: [],
+          category: getCategory(item.name),
+          quantity:
+            item.quantity !== null
+              ? Number(item.quantity)
+              : null,
+          totalQuantity:
+            item.quantity !== null
+              ? Number(item.quantity)
+              : null,
+          unit: normalizeUnit(item.unit),
+          source: "manual",
+        }));
+
+      /*
+       * -------------------------------------------------------------
+       * 9. SINCRONIZAMOS SOLO LOS PRODUCTOS DE RECETAS
+       * -------------------------------------------------------------
+       */
+
+      const generatedItems = [...generatedMap.values()];
+
+      const generatedIngredientIds = new Set(
+        generatedItems.map((item) => item.ingredientId)
+      );
+
+      const existingGeneratedShopping =
+        existingShopping.filter((item) =>
+          generatedShoppingIds.has(Number(item.id))
+        );
+
+      const existingGeneratedByIngredient = new Map<
+        number,
+        StoredShoppingRow
+      >();
+
+      for (const item of existingGeneratedShopping) {
+        existingGeneratedByIngredient.set(
+          Number(item.ingredient_id),
+          item
+        );
+      }
+
+      /*
+       * Borramos SOLO recetas que ya no están planificadas.
+       * Los manuales se quedan intactos.
+       */
+
+      const obsoleteGeneratedIds = existingGeneratedShopping
+        .filter(
+          (item) =>
+            !generatedIngredientIds.has(
+              Number(item.ingredient_id)
+            )
+        )
+        .map((item) => Number(item.id));
+
+      if (obsoleteGeneratedIds.length > 0) {
+        await supabase
+          .from("shopping_list_recipes")
+          .delete()
+          .in(
+            "shopping_list_id",
+            obsoleteGeneratedIds
+          );
+
+        const {
+          error: deleteShoppingError,
+        } = await supabase
+          .from("shopping_list")
+          .delete()
+          .in("id", obsoleteGeneratedIds)
+          .eq("user_id", user.id);
+
+        if (deleteShoppingError) {
+          throw deleteShoppingError;
+        }
+      }
+
+      /*
+       * Creamos/actualizamos los productos de recetas.
+       */
+
+      const finalRecipeShoppingItems: ShoppingItem[] = [];
+
+      for (const item of generatedItems) {
+        const existing =
+          existingGeneratedByIngredient.get(
+            item.ingredientId
+          );
+
+        let shoppingId: number;
+
+        if (existing) {
+          shoppingId = Number(existing.id);
+
+          const {
+            error: updateError,
+          } = await supabase
+            .from("shopping_list")
+            .update({
+              name: item.ingredientName,
+              quantity: item.quantity,
+              unit: item.unit,
+            })
+            .eq("id", shoppingId)
+            .eq("user_id", user.id);
+
+          if (updateError) {
+            throw updateError;
+          }
+        } else {
+          const {
+            data: insertedShopping,
+            error: insertError,
+          } = await supabase
+            .from("shopping_list")
+            .insert({
+              user_id: user.id,
+              ingredient_id: item.ingredientId,
+              name: item.ingredientName,
+              quantity: item.quantity,
+              unit: item.unit,
+              checked: false,
+            })
+            .select("id")
+            .single();
+
+          if (insertError) {
+            throw insertError;
+          }
+
+          shoppingId = Number(insertedShopping.id);
+        }
+
+        finalRecipeShoppingItems.push({
+          ...item,
+          id: String(shoppingId),
+        });
+      }
+
+      /*
+       * -------------------------------------------------------------
+       * 10. ACTUALIZAMOS RELACIONES RECETA ↔ COMPRA
+       * -------------------------------------------------------------
+       */
+
+      const shoppingIds = finalRecipeShoppingItems
+        .map((item) => Number(item.id))
+        .filter((id) => Number.isFinite(id));
+
+      if (shoppingIds.length > 0) {
+        const {
+          error: deleteRelationsError,
+        } = await supabase
+          .from("shopping_list_recipes")
+          .delete()
+          .in("shopping_list_id", shoppingIds);
+
+        if (deleteRelationsError) {
+          throw deleteRelationsError;
+        }
+      }
+
+      const relationKeySet = new Set<string>();
+
+      const relationRows: RelationRow[] = [];
+
+      for (const item of finalRecipeShoppingItems) {
+        const shoppingId = Number(item.id);
+
+        const recipeIdsForIngredient = [
+          ...new Set(
+            recipeIngredients
+              .filter(
+                (row) =>
+                  Number(row.ingredient_id) ===
+                  item.ingredientId
+              )
+              .map((row) => Number(row.recipe_id))
+          ),
+        ];
+
+        for (const recipeId of recipeIdsForIngredient) {
+          const key = `${shoppingId}-${recipeId}`;
+
+          if (relationKeySet.has(key)) {
+            continue;
+          }
+
+          relationKeySet.add(key);
+
+          relationRows.push({
+            shopping_list_id: shoppingId,
+            recipe_id: recipeId,
+          });
+        }
+      }
+
+      if (relationRows.length > 0) {
+        const {
+          error: relationError,
+        } = await supabase
+          .from("shopping_list_recipes")
+          .upsert(relationRows, {
+            onConflict:
+              "shopping_list_id,recipe_id",
+            ignoreDuplicates: true,
+          });
+
+        if (relationError) {
+          throw relationError;
+        }
+      }
+
+      /*
+       * -------------------------------------------------------------
+       * 11. APLICAMOS LA DESPENSA SOLO A RECETAS
+       * -------------------------------------------------------------
+       */
+
+      const recipeItemsWithPantry =
+        finalRecipeShoppingItems.map((item) => {
+          const pantryMatch = loadedPantry.find(
+            (pantry) =>
+              Number(pantry.ingredientId) ===
+                Number(item.ingredientId) ||
+              pantryMatchesIngredient(
+                pantry,
+                item.ingredientName
+              )
+          );
+
+          if (!pantryMatch) {
+            return item;
+          }
+
+          if (item.quantity === null) {
+            return {
+              ...item,
+              owned: true,
+              pantryQuantity: pantryMatch.quantity,
+              pantryUnit: pantryMatch.unit,
+            };
+          }
+
+          if (pantryMatch.quantity === null) {
+            return {
+              ...item,
+              owned: true,
+              pantryQuantity: null,
+              pantryUnit: pantryMatch.unit,
+            };
+          }
+
+          if (
+            !unitsAreCompatible(
+              item.unit,
+              pantryMatch.unit
+            )
+          ) {
+            return item;
+          }
+
+          const shoppingBase =
+            convertToBaseQuantity(
+              item.quantity,
+              item.unit
+            );
+
+          const pantryBase =
+            convertToBaseQuantity(
+              pantryMatch.quantity,
+              pantryMatch.unit
+            );
+
+          if (
+            shoppingBase.unit !==
+            pantryBase.unit
+          ) {
+            return item;
+          }
+
+          if (
+            pantryBase.quantity >=
+            shoppingBase.quantity
+          ) {
+            return {
+              ...item,
+              owned: true,
+              pantryQuantity:
+                pantryMatch.quantity,
+              pantryUnit: pantryMatch.unit,
+            };
+          }
+
+          const remainingBase =
+            shoppingBase.quantity -
+            pantryBase.quantity;
+
+          const remaining =
+            convertFromBaseQuantity(
+              remainingBase,
+              item.unit
+            );
+
+          return {
+            ...item,
+            quantity: remaining,
+            name: formatShoppingName(
+              item.ingredientName,
+              remaining,
+              item.unit
+            ),
+            pantryQuantity:
+              pantryMatch.quantity,
+            pantryUnit: pantryMatch.unit,
+          };
+        });
+
+      /*
+       * -------------------------------------------------------------
+       * 12. GUARDAMOS TODA LA LISTA EN ESTADO
+       * -------------------------------------------------------------
+       */
+
+      const allItems = [
+        ...recipeItemsWithPantry,
+        ...manualItems,
+      ];
+
+      setShoppingItems(allItems);
+
+      /*
+       * Conservamos los checks tanto de recetas como manuales.
+       */
+
+      const allValidIds = new Set(
+        allItems.map((item) => item.id)
+      );
+
+      const checkedIds = existingShopping
+        .filter((item) => item.checked)
+        .map((item) => String(item.id))
+        .filter((id) => allValidIds.has(id));
+
+      setCheckedItems(checkedIds);
+    } catch (error) {
+      console.error(
+        "Error cargando lista de compra desde Supabase:",
+        error
+      );
+
+      setErrorMessage(
+        "No hemos podido cargar la lista de compra. Revisa la consola para ver el error."
+      );
+    } finally {
+      setLoading(false);
     }
   }
 
-  function reloadRecipes() {
-    setAvailableRecipes(loadRecipesFromStorage());
-  }
-
-  function reloadPantry() {
-    setPantryItems(loadPantry());
-  }
-
-  function reloadAllData() {
-    reloadPlanner();
-    reloadRecipes();
-    reloadPantry();
-    setCheckedItems(loadCheckedItems());
-  }
-
   useEffect(() => {
-    reloadAllData();
-    setDataLoaded(true);
+    loadData();
 
-    const handlePlannerChanged = () => reloadPlanner();
-    const handleRecipesChanged = () => reloadRecipes();
-    const handlePantryChanged = () => reloadPantry();
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === "planner") {
-        reloadPlanner();
-      }
-
-      if (
-        event.key === "recipes" ||
-        event.key === "importedRecipes"
-      ) {
-        reloadRecipes();
-      }
-
-      if (event.key === "pantryItems") {
-        reloadPantry();
-      }
-
-      if (event.key === "shoppingChecked") {
-        setCheckedItems(loadCheckedItems());
-      }
+    const handlePlannerChanged = () => {
+      loadData();
     };
 
     window.addEventListener(
@@ -884,76 +1210,260 @@ export default function ShoppingPage() {
       handlePlannerChanged
     );
 
-    window.addEventListener(
-      "recipesChanged",
-      handleRecipesChanged
-    );
-
-    window.addEventListener(
-      "pantryChanged",
-      handlePantryChanged
-    );
-
-    window.addEventListener("storage", handleStorage);
-
     return () => {
       window.removeEventListener(
         "plannerChanged",
         handlePlannerChanged
       );
-
-      window.removeEventListener(
-        "recipesChanged",
-        handleRecipesChanged
-      );
-
-      window.removeEventListener(
-        "pantryChanged",
-        handlePantryChanged
-      );
-
-      window.removeEventListener("storage", handleStorage);
     };
   }, []);
 
-  useEffect(() => {
-    if (!dataLoaded) {
+  async function toggleItem(id: string) {
+    const numericId = Number(id);
+
+    const currentChecked =
+      checkedItems.includes(id);
+
+    const newChecked = !currentChecked;
+
+    setCheckedItems((current) =>
+      newChecked
+        ? [...current, id]
+        : current.filter(
+            (item) => item !== id
+          )
+    );
+
+    const { error } = await supabase
+      .from("shopping_list")
+      .update({
+        checked: newChecked,
+      })
+      .eq("id", numericId);
+
+    if (error) {
+      console.error(
+        "Error guardando producto comprado:",
+        error
+      );
+
+      setCheckedItems((current) =>
+        newChecked
+          ? current.filter(
+              (item) => item !== id
+            )
+          : [...current, id]
+      );
+    }
+  }
+
+  async function clearChecked() {
+    if (checkedItems.length === 0) {
       return;
     }
 
-    localStorage.setItem(
-      "shoppingChecked",
-      JSON.stringify(checkedItems)
-    );
-  }, [checkedItems, dataLoaded]);
+    const ids = checkedItems
+      .map(Number)
+      .filter((id) => Number.isFinite(id));
 
-  useEffect(() => {
-    if (!dataLoaded) {
+    const { error } = await supabase
+      .from("shopping_list")
+      .update({
+        checked: false,
+      })
+      .in("id", ids);
+
+    if (error) {
+      console.error(
+        "Error desmarcando productos:",
+        error
+      );
+
       return;
     }
 
-    localStorage.setItem(
-      "pantryItems",
-      JSON.stringify(pantryItems)
-    );
-  }, [pantryItems, dataLoaded]);
-
-  function notifyPantryChanged() {
-    window.dispatchEvent(new Event("pantryChanged"));
+    setCheckedItems([]);
   }
 
-  function savePantryImmediately(items: PantryItem[]) {
-    setPantryItems(items);
+  async function findOrCreateIngredient(
+    name: string
+  ): Promise<number | null> {
+    const normalizedName = name.trim();
 
-    localStorage.setItem(
-      "pantryItems",
-      JSON.stringify(items)
-    );
+    if (!normalizedName) {
+      return null;
+    }
 
-    notifyPantryChanged();
+    const {
+      data: existing,
+      error: searchError,
+    } = await supabase
+      .from("ingredients")
+      .select("id, name")
+      .ilike("name", normalizedName)
+      .limit(1)
+      .maybeSingle();
+
+    if (searchError) {
+      console.error(
+        "Error buscando ingrediente:",
+        searchError
+      );
+
+      return null;
+    }
+
+    if (existing) {
+      return Number(existing.id);
+    }
+
+    const {
+      data: created,
+      error: createError,
+    } = await supabase
+      .from("ingredients")
+      .insert({
+        name: normalizedName,
+      })
+      .select("id")
+      .single();
+
+    if (createError) {
+      console.error(
+        "Error creando ingrediente:",
+        createError
+      );
+
+      return null;
+    }
+
+    return Number(created.id);
   }
 
-  function addPantryItem() {
+  async function addManualItem() {
+    const name = manualName.trim();
+
+    if (!name || addingManual) {
+      return;
+    }
+
+    const quantity =
+      manualQuantity.trim() === ""
+        ? null
+        : Number(
+            manualQuantity.replace(",", ".")
+          );
+
+    if (
+      quantity !== null &&
+      (!Number.isFinite(quantity) ||
+        quantity < 0)
+    ) {
+      return;
+    }
+
+    setAddingManual(true);
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        return;
+      }
+
+      const ingredientId =
+        await findOrCreateIngredient(name);
+
+      if (!ingredientId) {
+        return;
+      }
+
+      const unit = normalizeUnit(
+        manualUnit.trim() || null
+      );
+
+      const {
+        data: inserted,
+        error,
+      } = await supabase
+        .from("shopping_list")
+        .insert({
+          user_id: user.id,
+          ingredient_id: ingredientId,
+          name,
+          quantity,
+          unit,
+          checked: false,
+        })
+        .select("id")
+        .single();
+
+      if (error) {
+        console.error(
+          "Error añadiendo producto manual:",
+          error
+        );
+
+        return;
+      }
+
+      if (!inserted) {
+        return;
+      }
+
+      setManualName("");
+      setManualQuantity("");
+      setManualUnit("");
+
+      setActiveList("manual");
+
+      await loadData();
+    } finally {
+      setAddingManual(false);
+    }
+  }
+
+  async function removeManualItem(id: string) {
+    const item = shoppingItems.find(
+      (shoppingItem) =>
+        shoppingItem.id === id
+    );
+
+    if (!item || item.source !== "manual") {
+      return;
+    }
+
+    const { error } = await supabase
+      .from("shopping_list")
+      .delete()
+      .eq("id", Number(id));
+
+    if (error) {
+      console.error(
+        "Error eliminando producto manual:",
+        error
+      );
+
+      return;
+    }
+
+    setShoppingItems((current) =>
+      current.filter(
+        (shoppingItem) =>
+          shoppingItem.id !== id
+      )
+    );
+
+    setCheckedItems((current) =>
+      current.filter(
+        (checkedId) => checkedId !== id
+      )
+    );
+  }
+
+  async function addPantryItem() {
     const name = pantryName.trim();
 
     if (!name) {
@@ -963,11 +1473,14 @@ export default function ShoppingPage() {
     const quantity =
       pantryQuantity.trim() === ""
         ? null
-        : Number(pantryQuantity.replace(",", "."));
+        : Number(
+            pantryQuantity.replace(",", ".")
+          );
 
     if (
       quantity !== null &&
-      (!Number.isFinite(quantity) || quantity < 0)
+      (!Number.isFinite(quantity) ||
+        quantity < 0)
     ) {
       return;
     }
@@ -976,93 +1489,131 @@ export default function ShoppingPage() {
       pantryUnit.trim() || null
     );
 
-    const comparableName =
-      getComparableIngredientName(name);
+    const ingredientId =
+      await findOrCreateIngredient(name);
 
-    const existingIndex = pantryItems.findIndex(
+    if (!ingredientId) {
+      return;
+    }
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return;
+    }
+
+    const existing = pantryItems.find(
       (item) =>
-        getComparableIngredientName(item.name) ===
-        comparableName
+        Number(item.ingredientId) ===
+          ingredientId ||
+        getComparableIngredientName(
+          item.name
+        ) ===
+          getComparableIngredientName(name)
     );
 
-    let updatedItems: PantryItem[];
-
-    if (existingIndex !== -1) {
-      const existing = pantryItems[existingIndex];
+    if (existing) {
+      let finalQuantity = quantity;
+      let finalUnit = unit;
 
       if (
         existing.quantity !== null &&
         quantity !== null &&
-        unitsAreCompatible(existing.unit, unit)
-      ) {
-        const existingBase = convertToBaseQuantity(
-          existing.quantity,
-          existing.unit
-        );
-
-        const newBase = convertToBaseQuantity(
-          quantity,
+        unitsAreCompatible(
+          existing.unit,
           unit
-        );
+        )
+      ) {
+        const existingBase =
+          convertToBaseQuantity(
+            existing.quantity,
+            existing.unit
+          );
 
-        if (existingBase.unit === newBase.unit) {
+        const newBase =
+          convertToBaseQuantity(
+            quantity,
+            unit
+          );
+
+        if (
+          existingBase.unit ===
+          newBase.unit
+        ) {
           const totalBase =
-            existingBase.quantity + newBase.quantity;
+            existingBase.quantity +
+            newBase.quantity;
 
-          updatedItems = [...pantryItems];
-
-          updatedItems[existingIndex] = {
-            ...existing,
-            quantity: convertFromBaseQuantity(
+          finalQuantity =
+            convertFromBaseQuantity(
               totalBase,
               existing.unit
-            ),
-          };
-        } else {
-          updatedItems = [...pantryItems];
+            );
 
-          updatedItems[existingIndex] = {
-            ...existing,
-            quantity,
-            unit,
-          };
+          finalUnit = existing.unit;
         }
-      } else {
-        updatedItems = [...pantryItems];
+      }
 
-        updatedItems[existingIndex] = {
-          ...existing,
-          quantity,
-          unit,
-        };
+      const { error } = await supabase
+        .from("pantry")
+        .update({
+          quantity: finalQuantity,
+          unit: finalUnit,
+          updated_at:
+            new Date().toISOString(),
+        })
+        .eq("id", Number(existing.id))
+        .eq("user_id", user.id);
+
+      if (error) {
+        console.error(
+          "Error actualizando despensa:",
+          error
+        );
+
+        return;
       }
     } else {
-      updatedItems = [
-        ...pantryItems,
-        {
-          id: `${Date.now()}-${Math.random()}`,
-          name,
+      const { error } = await supabase
+        .from("pantry")
+        .insert({
+          user_id: user.id,
+          ingredient_id: ingredientId,
           quantity,
           unit,
-        },
-      ];
-    }
+        });
 
-    savePantryImmediately(updatedItems);
+      if (error) {
+        console.error(
+          "Error añadiendo a despensa:",
+          error
+        );
+
+        return;
+      }
+    }
 
     setPantryName("");
     setPantryQuantity("");
     setPantryUnit("");
+
+    await loadData();
   }
 
-  function startEditingPantryItem(item: PantryItem) {
+  function startEditingPantryItem(
+    item: PantryItem
+  ) {
     setEditingPantryId(item.id);
     setPantryName(item.name);
+
     setPantryQuantity(
       item.quantity !== null
         ? String(item.quantity)
         : ""
     );
+
     setPantryUnit(item.unit || "");
   }
 
@@ -1073,7 +1624,7 @@ export default function ShoppingPage() {
     setPantryUnit("");
   }
 
-  function saveEditedPantryItem() {
+  async function saveEditedPantryItem() {
     if (!editingPantryId) {
       return;
     }
@@ -1087,11 +1638,14 @@ export default function ShoppingPage() {
     const quantity =
       pantryQuantity.trim() === ""
         ? null
-        : Number(pantryQuantity.replace(",", "."));
+        : Number(
+            pantryQuantity.replace(",", ".")
+          );
 
     if (
       quantity !== null &&
-      (!Number.isFinite(quantity) || quantity < 0)
+      (!Number.isFinite(quantity) ||
+        quantity < 0)
     ) {
       return;
     }
@@ -1100,281 +1654,157 @@ export default function ShoppingPage() {
       pantryUnit.trim() || null
     );
 
-    const updatedItems = pantryItems.map((item) =>
-      item.id === editingPantryId
-        ? {
-            ...item,
-            name,
-            quantity,
-            unit,
-          }
-        : item
-    );
+    const ingredientId =
+      await findOrCreateIngredient(name);
 
-    savePantryImmediately(updatedItems);
-    cancelEditingPantryItem();
-  }
-
-  function removePantryItem(id: string) {
-    savePantryImmediately(
-      pantryItems.filter((item) => item.id !== id)
-    );
-  }
-
-  const plannedRecipeOccurrences = useMemo(() => {
-    const occurrences: string[] = [];
-
-    for (const day of days) {
-      for (const meal of meals) {
-        const value = planner[day]?.[meal];
-
-        if (Array.isArray(value)) {
-          value.forEach((recipeId) => {
-            if (typeof recipeId === "string") {
-              occurrences.push(recipeId);
-            }
-          });
-        } else if (typeof value === "string") {
-          occurrences.push(value);
-        }
-      }
+    if (!ingredientId) {
+      return;
     }
 
-    return occurrences;
-  }, [planner]);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  const uniquePlannedRecipeIds = useMemo(
-    () => [...new Set(plannedRecipeOccurrences)],
-    [plannedRecipeOccurrences]
+    if (!user) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from("pantry")
+      .update({
+        ingredient_id: ingredientId,
+        quantity,
+        unit,
+        updated_at:
+          new Date().toISOString(),
+      })
+      .eq("id", Number(editingPantryId))
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error(
+        "Error editando ingrediente de despensa:",
+        error
+      );
+
+      return;
+    }
+
+    cancelEditingPantryItem();
+
+    await loadData();
+  }
+
+  async function removePantryItem(
+    id: string
+  ) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from("pantry")
+      .delete()
+      .eq("id", Number(id))
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error(
+        "Error eliminando ingrediente de despensa:",
+        error
+      );
+
+      return;
+    }
+
+    await loadData();
+  }
+
+  const recipeItems = useMemo(
+    () =>
+      shoppingItems.filter(
+        (item) => item.source === "recipe"
+      ),
+    [shoppingItems]
   );
 
-  const shoppingMap = useMemo(() => {
-    const map = new Map<string, ShoppingItem>();
+  const manualItems = useMemo(
+    () =>
+      shoppingItems.filter(
+        (item) => item.source === "manual"
+      ),
+    [shoppingItems]
+  );
 
-    for (const recipeId of plannedRecipeOccurrences) {
-      const recipe = availableRecipes[recipeId];
+  const displayedItems =
+    activeList === "recipe"
+      ? recipeItems
+      : manualItems;
 
-      if (!recipe) {
-        continue;
-      }
-
-      for (const rawIngredient of recipe.ingredients) {
-        const parsed = parseIngredient(rawIngredient);
-
-        const ingredientName =
-          parsed.name.trim() || rawIngredient.trim();
-
-        const comparableName =
-          getComparableIngredientName(ingredientName);
-
-        const unit = normalizeUnit(parsed.unit);
-
-        const id = `${comparableName}|${unit || "none"}`;
-
-        const existing = map.get(id);
-
-        if (!existing) {
-          map.set(id, {
-            id,
-            name: formatShoppingName(
-              ingredientName,
-              parsed.quantity,
-              unit
-            ),
-            ingredientName,
-            quantity: parsed.quantity,
-            totalQuantity: parsed.quantity,
-            unit,
-            recipes: [recipe.name],
-            category: getCategory(ingredientName),
-          });
-
-          continue;
-        }
-
-        if (
-          existing.quantity !== null &&
-          parsed.quantity !== null &&
-          unitsAreCompatible(existing.unit, unit)
-        ) {
-          const existingBase = convertToBaseQuantity(
-            existing.quantity,
-            existing.unit
-          );
-
-          const newBase = convertToBaseQuantity(
-            parsed.quantity,
-            unit
-          );
-
-          if (existingBase.unit === newBase.unit) {
-            const totalBase =
-              existingBase.quantity + newBase.quantity;
-
-            const aggregatedQuantity =
-              convertFromBaseQuantity(
-                totalBase,
-                existing.unit
-              );
-
-            existing.quantity = aggregatedQuantity;
-            existing.totalQuantity =
-              aggregatedQuantity;
-
-            existing.name = formatShoppingName(
-              existing.ingredientName ||
-                ingredientName,
-              existing.quantity,
-              existing.unit
-            );
-          }
-        }
-
-        if (!existing.recipes.includes(recipe.name)) {
-          existing.recipes.push(recipe.name);
-        }
-      }
-    }
-
-    return [...map.values()];
-  }, [plannedRecipeOccurrences, availableRecipes]);
-
-  const shoppingItems = useMemo(() => {
-    return shoppingMap.map((item) => {
-      const ingredientName =
-        item.ingredientName || item.name;
-
-      const pantryMatch = pantryItems.find((pantry) =>
-        pantryMatchesIngredient(
-          pantry,
-          ingredientName
-        )
-      );
-
-      if (!pantryMatch) {
-        return item;
-      }
-
-      if (item.quantity === null) {
-        return {
-          ...item,
-          owned: true,
-          pantryQuantity: pantryMatch.quantity,
-          pantryUnit: pantryMatch.unit,
-        };
-      }
-
-      if (pantryMatch.quantity === null) {
-        return {
-          ...item,
-          owned: true,
-          pantryQuantity: null,
-          pantryUnit: pantryMatch.unit,
-        };
-      }
-
-      if (
-        !unitsAreCompatible(
-          item.unit,
-          pantryMatch.unit
-        )
-      ) {
-        return item;
-      }
-
-      const shoppingBase = convertToBaseQuantity(
-        item.quantity,
-        item.unit
-      );
-
-      const pantryBase = convertToBaseQuantity(
-        pantryMatch.quantity,
-        pantryMatch.unit
-      );
-
-      if (shoppingBase.unit !== pantryBase.unit) {
-        return item;
-      }
-
-      if (
-        pantryBase.quantity >=
-        shoppingBase.quantity
-      ) {
-        return {
-          ...item,
-          owned: true,
-          pantryQuantity: pantryMatch.quantity,
-          pantryUnit: pantryMatch.unit,
-        };
-      }
-
-      const remainingBase =
-        shoppingBase.quantity -
-        pantryBase.quantity;
-
-      const remaining = convertFromBaseQuantity(
-        remainingBase,
-        item.unit
-      );
-
-      return {
-        ...item,
-        quantity: remaining,
-        name: formatShoppingName(
-          ingredientName,
-          remaining,
-          item.unit
-        ),
-        pantryQuantity: pantryMatch.quantity,
-        pantryUnit: pantryMatch.unit,
-      };
-    });
-  }, [shoppingMap, pantryItems]);
-
-  function toggleItem(id: string) {
-    setCheckedItems((current) =>
-      current.includes(id)
-        ? current.filter((item) => item !== id)
-        : [...current, id]
-    );
-  }
-
-  function clearChecked() {
-    setCheckedItems([]);
-  }
-
-  const checkedCount = shoppingItems.filter((item) =>
-    checkedItems.includes(item.id)
+  const checkedCount = displayedItems.filter(
+    (item) =>
+      checkedItems.includes(item.id)
   ).length;
 
-  function getCategoryItems(category: string) {
-    return shoppingItems.filter(
-      (item) => item.category === category
+  const totalCount = displayedItems.length;
+
+  function getCategoryItems(
+    category: string
+  ) {
+    return displayedItems.filter(
+      (item) =>
+        item.category === category
     );
   }
 
-  const hasShoppingList = shoppingItems.length > 0;
+  const categoriesWithItems =
+    categories.filter(
+      (category) =>
+        getCategoryItems(category)
+          .length > 0
+    );
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-[#F6F3EC] px-4 py-6 sm:px-6">
+        <div className="mx-auto max-w-5xl">
+          <div className="flex min-h-[60vh] items-center justify-center">
+            <div className="text-center">
+              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-[#D8D5CB] border-t-[#879078]" />
+
+              <p className="mt-4 text-sm text-[#879078]">
+                Preparando tu lista de compra…
+              </p>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <main className="min-h-screen bg-[#F6F3EC] px-4 py-6 sm:px-6">
+    <main className="min-h-screen bg-[#F6F3EC] px-4 py-6 pb-28 sm:px-6">
       <div className="mx-auto max-w-5xl">
-        <header className="mb-6">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <Link
-                href="/"
-                className="text-sm text-[#879078] hover:underline"
-              >
-                ← Volver
-              </Link>
 
-              <h1 className="mt-2 text-3xl font-bold text-[#30352C]">
-                Lista de compra 🛒
+        {/* CABECERA */}
+
+        <div className="mb-6">
+          <p className="text-sm font-medium text-[#879078]">
+            Compra
+          </p>
+
+          <div className="mt-1 flex items-end justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-semibold tracking-tight text-[#30352C]">
+                Lista de compra
               </h1>
 
               <p className="mt-1 text-sm text-[#879078]">
-                Organiza lo que necesitas comprar según tu
-                planificación.
+                Todo lo que necesitas, organizado para ti.
               </p>
             </div>
 
@@ -1382,47 +1812,406 @@ export default function ShoppingPage() {
               <button
                 type="button"
                 onClick={clearChecked}
-                className="rounded-full bg-white px-4 py-2 text-sm font-medium text-[#59614F] shadow-sm transition hover:bg-[#EEEAE0]"
+                className="shrink-0 rounded-2xl bg-white px-4 py-2.5 text-xs font-semibold text-[#59614F] shadow-sm transition hover:bg-[#F0EEE7] active:bg-[#E7E4DA]"
               >
-                Desmarcar comprados
+                Desmarcar
               </button>
             )}
           </div>
-        </header>
+        </div>
 
-        <section className="mb-6 overflow-hidden rounded-3xl bg-white shadow-sm">
-          <button
-            type="button"
-            onClick={() => setShowPantry((value) => !value)}
-            className="flex w-full items-center justify-between px-5 py-4 text-left"
-          >
+        {/* TABS RECETAS / MANUAL */}
+
+        <section className="mb-6 rounded-3xl bg-white p-2 shadow-sm">
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                setActiveList("recipe")
+              }
+              className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${
+                activeList === "recipe"
+                  ? "bg-[#879078] text-white"
+                  : "text-[#59614F] hover:bg-[#F6F3EC]"
+              }`}
+            >
+              <span className="mr-2">
+                🍲
+              </span>
+              Recetas
+              {recipeItems.length > 0 && (
+                <span
+                  className={`ml-2 rounded-full px-2 py-0.5 text-xs ${
+                    activeList === "recipe"
+                      ? "bg-white/20 text-white"
+                      : "bg-[#EAE8DF] text-[#687260]"
+                  }`}
+                >
+                  {recipeItems.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setActiveList("manual")
+              }
+              className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${
+                activeList === "manual"
+                  ? "bg-[#879078] text-white"
+                  : "text-[#59614F] hover:bg-[#F6F3EC]"
+              }`}
+            >
+              <span className="mr-2">
+                ✏️
+              </span>
+              Manual
+              {manualItems.length > 0 && (
+                <span
+                  className={`ml-2 rounded-full px-2 py-0.5 text-xs ${
+                    activeList === "manual"
+                      ? "bg-white/20 text-white"
+                      : "bg-[#EAE8DF] text-[#687260]"
+                  }`}
+                >
+                  {manualItems.length}
+                </span>
+              )}
+            </button>
+          </div>
+        </section>
+
+        {/* RESUMEN */}
+
+        <section className="mb-6 rounded-3xl bg-white px-5 py-4 shadow-sm">
+          <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="font-semibold text-[#30352C]">
-                🏠 Lo que tengo en casa
-              </h2>
+              <p className="text-sm font-semibold text-[#30352C]">
+                {activeList === "recipe"
+                  ? "Para tus recetas"
+                  : "Añadido por ti"}
+              </p>
 
-              <p className="mt-1 text-xs text-[#879078]">
-                Añade alimentos que ya tienes para calcular
-                cuánto necesitas comprar.
+              <p className="mt-0.5 text-xs text-[#879078]">
+                {checkedCount} de {totalCount}{" "}
+                {totalCount === 1
+                  ? "producto comprado"
+                  : "productos comprados"}
               </p>
             </div>
 
-            <span className="text-[#879078]">
+            <div className="text-2xl">
+              {activeList === "recipe"
+                ? "🍲"
+                : "✏️"}
+            </div>
+          </div>
+        </section>
+
+        {/* AÑADIR MANUAL */}
+
+        {activeList === "manual" && (
+          <section className="mb-6 rounded-3xl bg-white p-5 shadow-sm">
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold text-[#30352C]">
+                Añadir a la lista
+              </h2>
+
+              <p className="mt-1 text-sm text-[#879078]">
+                Cosas que quieres comprar aunque no estén
+                relacionadas con ninguna receta.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[1fr_120px_140px_auto]">
+              <input
+                type="text"
+                value={manualName}
+                onChange={(event) =>
+                  setManualName(
+                    event.target.value
+                  )
+                }
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter"
+                  ) {
+                    addManualItem();
+                  }
+                }}
+                placeholder="Ej. Café"
+                className="rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-4 py-3 text-sm text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
+              />
+
+              <input
+                type="text"
+                inputMode="decimal"
+                value={manualQuantity}
+                onChange={(event) =>
+                  setManualQuantity(
+                    event.target.value
+                  )
+                }
+                placeholder="Cantidad"
+                className="rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-4 py-3 text-sm text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
+              />
+
+              <input
+                type="text"
+                value={manualUnit}
+                onChange={(event) =>
+                  setManualUnit(
+                    event.target.value
+                  )
+                }
+                placeholder="Unidad (kg, ud...)"
+                className="rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-4 py-3 text-sm text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
+              />
+
+              <button
+                type="button"
+                onClick={addManualItem}
+                disabled={
+                  addingManual ||
+                  !manualName.trim()
+                }
+                className="rounded-2xl bg-[#879078] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68] active:bg-[#687260] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {addingManual
+                  ? "Añadiendo…"
+                  : "Añadir"}
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* ERROR */}
+
+        {errorMessage && (
+          <section className="mb-6 rounded-3xl border border-[#E5D8D3] bg-[#FBF5F2] px-5 py-4">
+            <p className="text-sm text-[#8B625A]">
+              {errorMessage}
+            </p>
+          </section>
+        )}
+
+        {/* LISTA VACÍA */}
+
+        {displayedItems.length === 0 ? (
+          <section className="rounded-3xl bg-white px-6 py-12 text-center shadow-sm">
+            <div className="text-5xl">
+              {activeList === "recipe"
+                ? "🍲"
+                : "📝"}
+            </div>
+
+            <h2 className="mt-4 text-xl font-semibold text-[#30352C]">
+              {activeList === "recipe"
+                ? "No hay nada que comprar todavía"
+                : "Tu lista manual está vacía"}
+            </h2>
+
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#879078]">
+              {activeList === "recipe"
+                ? "Añade recetas al planificador y sus ingredientes aparecerán aquí automáticamente."
+                : "Añade productos que quieras comprar aunque no formen parte de ninguna receta."}
+            </p>
+
+            {activeList === "recipe" ? (
+              <Link
+                href="/planificador"
+                className="mt-6 inline-flex rounded-2xl bg-[#879078] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68] active:bg-[#687260]"
+              >
+                Ir al planificador
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  const input =
+                    document.querySelector<HTMLInputElement>(
+                      'input[placeholder="Ej. Café"]'
+                    );
+
+                  input?.focus();
+                }}
+                className="mt-6 inline-flex rounded-2xl bg-[#879078] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68] active:bg-[#687260]"
+              >
+                Añadir producto
+              </button>
+            )}
+          </section>
+        ) : (
+          <>
+            {/* LISTA POR CATEGORÍAS */}
+
+            <div className="space-y-4">
+              {categoriesWithItems.map(
+                (category) => {
+                  const items =
+                    getCategoryItems(
+                      category
+                    );
+
+                  return (
+                    <section
+                      key={category}
+                      className="rounded-3xl bg-white p-5 shadow-sm"
+                    >
+                      <div className="mb-4 flex items-center justify-between gap-3">
+                        <h2 className="text-base font-semibold text-[#30352C]">
+                          {category}
+                        </h2>
+
+                        <span className="rounded-full bg-[#F1F2ED] px-2.5 py-1 text-xs font-medium text-[#737D68]">
+                          {items.length}
+                        </span>
+                      </div>
+
+                      <div className="divide-y divide-[#EEECE5]">
+                        {items.map(
+                          (item) => {
+                            const checked =
+                              checkedItems.includes(
+                                item.id
+                              );
+
+                            return (
+                              <div
+                                key={item.id}
+                                className="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    toggleItem(
+                                      item.id
+                                    )
+                                  }
+                                  aria-label={
+                                    checked
+                                      ? "Marcar como pendiente"
+                                      : "Marcar como comprado"
+                                  }
+                                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition ${
+                                    checked
+                                      ? "border-[#879078] bg-[#879078] text-white"
+                                      : "border-[#C8C9C0] bg-white hover:border-[#879078]"
+                                  }`}
+                                >
+                                  {checked && (
+                                    <span className="text-xs font-bold">
+                                      ✓
+                                    </span>
+                                  )}
+                                </button>
+
+                                <div className="min-w-0 flex-1">
+                                  <div
+                                    className={`text-sm font-medium transition ${
+                                      checked
+                                        ? "text-[#A0A399] line-through"
+                                        : "text-[#30352C]"
+                                    }`}
+                                  >
+                                    {item.name}
+                                  </div>
+
+                                  {item.source ===
+                                    "recipe" &&
+                                    item.recipes
+                                      .length >
+                                      0 && (
+                                      <p className="mt-1 text-xs text-[#9A9E94]">
+                                        {item.recipes.join(
+                                          " · "
+                                        )}
+                                      </p>
+                                    )}
+
+                                  {item.source ===
+                                    "manual" && (
+                                    <p className="mt-1 text-xs text-[#B0AFA7]">
+                                      Añadido manualmente
+                                    </p>
+                                  )}
+
+                                  {item.owned && (
+                                    <p className="mt-1 text-xs font-medium text-[#879078]">
+                                      ✓ Ya lo tienes en casa
+                                    </p>
+                                  )}
+                                </div>
+
+                                {item.source ===
+                                  "manual" && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      removeManualItem(
+                                        item.id
+                                      )
+                                    }
+                                    className="shrink-0 rounded-xl px-3 py-2 text-xs font-medium text-[#9B6F67] transition hover:bg-[#F5EFEC] active:bg-[#EEE4E0]"
+                                  >
+                                    Eliminar
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          }
+                        )}
+                      </div>
+                    </section>
+                  );
+                }
+              )}
+            </div>
+          </>
+        )}
+
+        {/* DESPENSA */}
+
+        <section className="mt-6 rounded-3xl bg-white shadow-sm">
+          <button
+            type="button"
+            onClick={() =>
+              setShowPantry(
+                (current) => !current
+              )
+            }
+            className="flex w-full items-center justify-between gap-4 px-5 py-5 text-left"
+          >
+            <div>
+              <h2 className="text-lg font-semibold text-[#30352C]">
+                🏠 Lo que tengo en casa
+              </h2>
+
+              <p className="mt-1 text-sm text-[#879078]">
+                Guarda tus ingredientes para que no los
+                tengas que comprar de nuevo.
+              </p>
+            </div>
+
+            <span className="text-lg text-[#879078]">
               {showPantry ? "⌃" : "⌄"}
             </span>
           </button>
 
           {showPantry && (
-            <div className="border-t border-[#EEEAE0] px-5 pb-5 pt-4">
-              <div className="grid gap-3 sm:grid-cols-[2fr_1fr_1fr_auto]">
+            <div className="border-t border-[#EEECE5] px-5 pb-5 pt-5">
+              <div className="grid gap-3 sm:grid-cols-[1fr_120px_140px_auto]">
                 <input
                   type="text"
                   value={pantryName}
                   onChange={(event) =>
-                    setPantryName(event.target.value)
+                    setPantryName(
+                      event.target.value
+                    )
                   }
                   placeholder="Ingrediente"
-                  className="rounded-2xl border border-[#DDD8CC] bg-[#F6F3EC] px-4 py-3 text-sm text-[#30352C] outline-none placeholder:text-[#9A9D94] focus:border-[#AAB19D]"
+                  className="rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-4 py-3 text-sm text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
                 />
 
                 <input
@@ -1430,345 +2219,121 @@ export default function ShoppingPage() {
                   inputMode="decimal"
                   value={pantryQuantity}
                   onChange={(event) =>
-                    setPantryQuantity(event.target.value)
+                    setPantryQuantity(
+                      event.target.value
+                    )
                   }
                   placeholder="Cantidad"
-                  className="rounded-2xl border border-[#DDD8CC] bg-[#F6F3EC] px-4 py-3 text-sm text-[#30352C] outline-none placeholder:text-[#9A9D94] focus:border-[#AAB19D]"
+                  className="rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-4 py-3 text-sm text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
                 />
 
                 <input
                   type="text"
                   value={pantryUnit}
                   onChange={(event) =>
-                    setPantryUnit(event.target.value)
+                    setPantryUnit(
+                      event.target.value
+                    )
                   }
                   placeholder="Unidad"
-                  className="rounded-2xl border border-[#DDD8CC] bg-[#F6F3EC] px-4 py-3 text-sm text-[#30352C] outline-none placeholder:text-[#9A9D94] focus:border-[#AAB19D]"
+                  className="rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-4 py-3 text-sm text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
                 />
 
-                {editingPantryId ? (
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={saveEditedPantryItem}
-                      className="rounded-2xl bg-[#879078] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68]"
-                    >
-                      Guardar
-                    </button>
+                <div className="flex gap-2">
+                  {editingPantryId ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={
+                          saveEditedPantryItem
+                        }
+                        className="rounded-2xl bg-[#879078] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68] active:bg-[#687260]"
+                      >
+                        Guardar
+                      </button>
 
+                      <button
+                        type="button"
+                        onClick={
+                          cancelEditingPantryItem
+                        }
+                        className="rounded-2xl bg-[#F1EFE8] px-4 py-3 text-sm font-medium text-[#59614F] transition hover:bg-[#E8E5DC]"
+                      >
+                        Cancelar
+                      </button>
+                    </>
+                  ) : (
                     <button
                       type="button"
-                      onClick={cancelEditingPantryItem}
-                      className="rounded-2xl bg-[#EEEAE0] px-4 py-3 text-sm font-medium text-[#59614F] transition hover:bg-[#E3DFD4]"
+                      onClick={addPantryItem}
+                      className="rounded-2xl bg-[#879078] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68] active:bg-[#687260]"
                     >
-                      Cancelar
+                      Añadir
                     </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={addPantryItem}
-                    className="rounded-2xl bg-[#879078] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68]"
-                  >
-                    Añadir
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
 
               {pantryItems.length > 0 && (
                 <div className="mt-5 space-y-2">
-                  {pantryItems.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-center justify-between gap-3 rounded-2xl bg-[#F6F3EC] px-4 py-3"
-                    >
-                      <div className="min-w-0">
-                        <p className="font-medium text-[#30352C]">
-                          {item.name}
-                        </p>
+                  {pantryItems.map(
+                    (item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between gap-3 rounded-2xl bg-[#F6F3EC] px-4 py-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-medium text-[#30352C]">
+                            {item.name}
+                          </p>
 
-                        <p className="text-xs text-[#879078]">
-                          {item.quantity !== null
-                            ? `${formatNumber(
-                                item.quantity
-                              )}${
-                                item.unit
-                                  ? ` ${item.unit}`
-                                  : ""
-                              }`
-                            : "Lo tengo"}
-                        </p>
+                          <p className="text-xs text-[#879078]">
+                            {item.quantity !==
+                            null
+                              ? `${formatNumber(
+                                  item.quantity
+                                )}${
+                                  item.unit
+                                    ? ` ${item.unit}`
+                                    : ""
+                                }`
+                              : "Lo tengo"}
+                          </p>
+                        </div>
+
+                        <div className="flex shrink-0 gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              startEditingPantryItem(
+                                item
+                              )
+                            }
+                            className="rounded-xl px-3 py-2 text-xs font-medium text-[#59614F] transition hover:bg-white active:bg-[#EAE7DE]"
+                          >
+                            Editar
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              removePantryItem(
+                                item.id
+                              )
+                            }
+                            className="rounded-xl px-3 py-2 text-xs font-medium text-[#9B6F67] transition hover:bg-white active:bg-[#F0E8E4]"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
                       </div>
-
-                      <div className="flex shrink-0 gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            startEditingPantryItem(item)
-                          }
-                          className="rounded-xl px-3 py-2 text-xs font-medium text-[#59614F] hover:bg-white"
-                        >
-                          Editar
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            removePantryItem(item.id)
-                          }
-                          className="rounded-xl px-3 py-2 text-xs font-medium text-[#9B6F67] hover:bg-white"
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  )}
                 </div>
               )}
             </div>
           )}
         </section>
-
-        {!hasShoppingList ? (
-          <section className="rounded-3xl bg-white px-6 py-12 text-center shadow-sm">
-            <div className="text-5xl">🛒</div>
-
-            <h2 className="mt-4 text-xl font-semibold text-[#30352C]">
-              Tu lista está vacía
-            </h2>
-
-            <p className="mx-auto mt-2 max-w-md text-sm text-[#879078]">
-              Añade recetas al planificador para que aquí
-              aparezcan automáticamente los ingredientes que
-              necesitas.
-            </p>
-
-            <Link
-              href="/planificador"
-              className="mt-6 inline-flex rounded-2xl bg-[#879078] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68]"
-            >
-              Ir al planificador
-            </Link>
-          </section>
-        ) : (
-          <>
-            <section className="mb-6 rounded-3xl bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-semibold text-[#30352C]">
-                    {shoppingItems.length}{" "}
-                    {shoppingItems.length === 1
-                      ? "producto"
-                      : "productos"}
-                  </p>
-
-                  <p className="mt-1 text-xs text-[#879078]">
-                    {checkedCount}{" "}
-                    {checkedCount === 1
-                      ? "producto marcado"
-                      : "productos marcados"}
-                  </p>
-                </div>
-
-                <div className="rounded-full bg-[#F0EEE6] px-4 py-2 text-xs font-medium text-[#59614F]">
-                  {uniquePlannedRecipeIds.length}{" "}
-                  {uniquePlannedRecipeIds.length === 1
-                    ? "receta"
-                    : "recetas"}
-                </div>
-              </div>
-            </section>
-
-            <section className="mb-6">
-              <div className="grid gap-4 sm:grid-cols-2">
-                {uniquePlannedRecipeIds.map((recipeId) => {
-                  const recipe =
-                    availableRecipes[recipeId];
-
-                  if (!recipe) {
-                    return null;
-                  }
-
-                  return (
-                    <Link
-                      key={recipeId}
-                      href={`/recetas/${recipeId}`}
-                      className="rounded-3xl bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#F0EEE6] text-2xl">
-                          {recipe.emoji || "🍽️"}
-                        </div>
-
-                        <div className="min-w-0">
-                          <p className="text-xs text-[#879078]">
-                            Receta
-                          </p>
-
-                          <h3 className="truncate font-semibold text-[#30352C]">
-                            {recipe.name}
-                          </h3>
-                        </div>
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            </section>
-
-            <div className="space-y-6">
-              {categories.map((category) => {
-                const categoryItems =
-                  getCategoryItems(category);
-
-                if (categoryItems.length === 0) {
-                  return null;
-                }
-
-                return (
-                  <section key={category}>
-                    <div className="mb-3 flex items-center justify-between">
-                      <h2 className="text-lg font-semibold text-[#30352C]">
-                        {category}
-                      </h2>
-
-                      <span className="text-xs text-[#879078]">
-                        {categoryItems.length}
-                      </span>
-                    </div>
-
-                    <div className="overflow-hidden rounded-3xl bg-white shadow-sm">
-                      {categoryItems.map((item, index) => {
-                        const checked =
-                          checkedItems.includes(item.id);
-
-                        return (
-                          <div
-                            key={item.id}
-                            className={`flex gap-3 px-5 py-4 ${
-                              index !==
-                              categoryItems.length - 1
-                                ? "border-b border-[#EEEAE0]"
-                                : ""
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() =>
-                                toggleItem(item.id)
-                              }
-                              className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs transition ${
-                                checked
-                                  ? "border-[#879078] bg-[#879078] text-white"
-                                  : "border-[#C7C9C0] bg-white text-transparent"
-                              }`}
-                              aria-label={
-                                checked
-                                  ? "Desmarcar producto"
-                                  : "Marcar producto"
-                              }
-                            >
-                              ✓
-                            </button>
-
-                            <div className="min-w-0 flex-1">
-                              <p
-                                className={`font-medium ${
-                                  checked
-                                    ? "text-[#9A9D94] line-through"
-                                    : "text-[#30352C]"
-                                }`}
-                              >
-                                {item.name}
-                              </p>
-
-                              {item.recipes.length > 0 && (
-                                <p className="mt-1 text-xs text-[#9A9D94]">
-                                  {item.recipes.join(" · ")}
-                                </p>
-                              )}
-
-                              {item.owned && (
-                                <>
-                                  <p className="mt-1 text-xs font-medium text-[#879078]">
-                                    ✓ Ya lo tienes en casa
-                                  </p>
-
-                                  {item.totalQuantity !==
-                                    undefined &&
-                                    item.totalQuantity !==
-                                      null && (
-                                      <p className="mt-1 text-xs text-[#879078]">
-                                        Necesitas{" "}
-                                        {formatNumber(
-                                          item.totalQuantity
-                                        )}
-                                        {item.unit
-                                          ? ` ${item.unit}`
-                                          : ""}{" "}
-                                        · Tienes{" "}
-                                        {item.pantryQuantity !==
-                                          null &&
-                                        item.pantryQuantity !==
-                                          undefined
-                                          ? `${formatNumber(
-                                              item.pantryQuantity
-                                            )}${
-                                              item.pantryUnit
-                                                ? ` ${item.pantryUnit}`
-                                                : ""
-                                            }`
-                                          : "lo suficiente"}{" "}
-                                        · No necesitas comprar
-                                      </p>
-                                    )}
-                                </>
-                              )}
-
-                              {!item.owned &&
-                                item.pantryQuantity !==
-                                  undefined &&
-                                item.pantryQuantity !==
-                                  null &&
-                                item.totalQuantity !==
-                                  undefined &&
-                                item.totalQuantity !==
-                                  null && (
-                                  <p className="mt-1 text-xs text-[#879078]">
-                                    Necesitas{" "}
-                                    {formatNumber(
-                                      item.totalQuantity
-                                    )}
-                                    {item.unit
-                                      ? ` ${item.unit}`
-                                      : ""}{" "}
-                                    · Tienes{" "}
-                                    {formatNumber(
-                                      item.pantryQuantity
-                                    )}
-                                    {item.pantryUnit
-                                      ? ` ${item.pantryUnit}`
-                                      : ""}{" "}
-                                    · Comprar{" "}
-                                    {formatNumber(
-                                      item.quantity ?? 0
-                                    )}
-                                    {item.unit
-                                      ? ` ${item.unit}`
-                                      : ""}
-                                  </p>
-                                )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </section>
-                );
-              })}
-            </div>
-          </>
-        )}
       </div>
     </main>
   );
