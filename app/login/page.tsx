@@ -6,6 +6,9 @@ import { supabase } from "@/lib/supabase";
 
 type FormMode = "login" | "register" | "forgot" | "reset";
 
+const recoveryMessage =
+  "Escribe tu nueva contraseña para volver a entrar en Mi cocina.";
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -14,14 +17,44 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    let mounted = true;
 
-    if (params.get("mode") === "reset") {
+    const activateResetMode = () => {
+      if (!mounted) return;
+
       setMode("reset");
-      setMessage(
-        "Escribe tu nueva contraseña para volver a entrar en Mi cocina."
-      );
+      setMessage(recoveryMessage);
+      setPassword("");
+    };
+
+    // Detectamos el enlace de recuperación tanto en la URL
+    // normal como en el fragmento que utiliza Supabase.
+    const params = new URLSearchParams(window.location.search);
+    const hash = window.location.hash.startsWith("#")
+      ? window.location.hash.slice(1)
+      : window.location.hash;
+    const hashParams = new URLSearchParams(hash);
+
+    if (
+      params.get("mode") === "reset" ||
+      hashParams.get("type") === "recovery"
+    ) {
+      activateResetMode();
     }
+
+    // Supabase también notifica cuándo comienza una recuperación.
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        activateResetMode();
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -45,17 +78,28 @@ export default function LoginPage() {
           );
         }
       } else if (mode === "reset") {
+        const { data, error: sessionError } =
+          await supabase.auth.getSession();
+
+        if (sessionError || !data.session) {
+          setMessage(
+            "El enlace de recuperación no es válido o ha caducado. Solicita uno nuevo e inténtalo otra vez."
+          );
+          return;
+        }
+
         const { error } = await supabase.auth.updateUser({
           password,
         });
 
         if (error) {
           setMessage(
-            "No hemos podido cambiar la contraseña. Puede que el enlace haya caducado. Solicita uno nuevo e inténtalo otra vez."
+            "No hemos podido cambiar la contraseña. Comprueba que tenga al menos 6 caracteres o solicita un enlace nuevo."
           );
         } else {
           setPassword("");
           setMessage("¡Contraseña actualizada! Entrando en Mi cocina…");
+
           window.location.href = "/";
         }
       } else if (mode === "register") {
@@ -100,7 +144,8 @@ export default function LoginPage() {
   };
 
   const isResetMode = mode === "reset";
-  const needsPassword = mode === "login" || mode === "register" || isResetMode;
+  const needsPassword =
+    mode === "login" || mode === "register" || isResetMode;
 
   return (
     <main className="min-h-screen bg-[#F7F5EF] flex items-center justify-center px-6">
@@ -163,16 +208,15 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   autoComplete={
-                    isResetMode
+                    isResetMode || mode === "register"
                       ? "new-password"
-                      : mode === "register"
-                        ? "new-password"
-                        : "current-password"
+                      : "current-password"
                   }
                   required
                   minLength={6}
                   className="w-full rounded-2xl border border-[#DDE8DF] bg-[#F7F5EF] px-4 py-3 text-[#26352D] outline-none focus:border-[#52685A]"
                 />
+
                 {(mode === "register" || isResetMode) && (
                   <p className="text-xs text-[#6B756E] mt-2">
                     La contraseña debe tener al menos 6 caracteres.
