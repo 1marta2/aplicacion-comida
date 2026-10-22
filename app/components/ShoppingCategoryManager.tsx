@@ -13,6 +13,7 @@ type Props = {
   onCreate: (name: string) => Promise<void>;
   onRename: (id: number, name: string) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
+  onReorder: (orderedIds: number[]) => Promise<void>;
 };
 
 export default function ShoppingCategoryManager({
@@ -20,6 +21,7 @@ export default function ShoppingCategoryManager({
   onCreate,
   onRename,
   onDelete,
+  onReorder,
 }: Props) {
   const [newName, setNewName] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -74,6 +76,26 @@ export default function ShoppingCategoryManager({
     }
   }
 
+  async function moveCategory(id: number, direction: -1 | 1) {
+    if (busy) return;
+    const index = categories.findIndex((category) => category.id === id);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= categories.length) return;
+
+    const reordered = [...categories];
+    [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
+    setBusy(true);
+    setMessage("");
+    try {
+      await onReorder(reordered.map((category) => category.id));
+    } catch (error) {
+      console.error(error);
+      setMessage("No se ha podido guardar el nuevo orden de las categorías.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="mb-6 rounded-3xl border border-[#E4E5DA] bg-white p-5 shadow-sm">
       <div className="mb-4">
@@ -95,7 +117,7 @@ export default function ShoppingCategoryManager({
           onChange={(event) => setNewName(event.target.value)}
           placeholder="Ej. Congelados"
           aria-label="Nombre de la nueva categoría"
-          className="min-w-0 flex-1 rounded-2xl border border-[#E1DED5] bg-[#FBFAF7] px-3 py-2.5 text-sm outline-none focus:border-[#879078]"
+          className="min-w-0 flex-1 rounded-2xl border border-[#E1DED5] bg-[#FBFAF7] px-3 py-2.5 text-sm text-[#30352C] placeholder:text-[#8B8D83] outline-none focus:border-[#879078]"
         />
         <button
           type="submit"
@@ -115,7 +137,7 @@ export default function ShoppingCategoryManager({
                   value={editingName}
                   onChange={(event) => setEditingName(event.target.value)}
                   aria-label="Nuevo nombre de categoría"
-                  className="min-w-0 flex-1 rounded-xl border border-[#E1DED5] bg-white px-3 py-2 text-sm outline-none focus:border-[#879078]"
+                  className="min-w-0 flex-1 rounded-xl border border-[#E1DED5] bg-white px-3 py-2 text-sm text-[#30352C] placeholder:text-[#8B8D83] outline-none focus:border-[#879078]"
                 />
                 <button type="button" onClick={() => void rename()} disabled={!editingName.trim() || busy} className="text-sm font-semibold text-[#52685A] disabled:opacity-50">Guardar</button>
                 <button type="button" onClick={() => setEditingId(null)} className="text-sm text-[#788675]">Cancelar</button>
@@ -123,20 +145,44 @@ export default function ShoppingCategoryManager({
             ) : (
               <>
                 <span className="min-w-0 flex-1 text-sm font-medium text-[#30352C]">{category.name}</span>
-                <button
-                  type="button"
-                  onClick={() => { setEditingId(category.id); setEditingName(category.name); }}
-                  className="rounded-xl px-2 py-1.5 text-xs font-semibold text-[#52685A] hover:bg-white"
-                >
-                  Renombrar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void remove(category.id, category.name)}
-                  className="rounded-xl px-2 py-1.5 text-xs font-semibold text-[#A16E63] hover:bg-white"
-                >
-                  Eliminar
-                </button>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => void moveCategory(category.id, -1)}
+                    disabled={busy || categories[0]?.id === category.id}
+                    aria-label={`Subir ${category.name}`}
+                    title="Subir categoría"
+                    className="rounded-lg px-2 py-1.5 text-sm font-semibold text-[#52685A] hover:bg-white disabled:opacity-30"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void moveCategory(category.id, 1)}
+                    disabled={busy || categories[categories.length - 1]?.id === category.id}
+                    aria-label={`Bajar ${category.name}`}
+                    title="Bajar categoría"
+                    className="rounded-lg px-2 py-1.5 text-sm font-semibold text-[#52685A] hover:bg-white disabled:opacity-30"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setEditingId(category.id); setEditingName(category.name); }}
+                    disabled={busy}
+                    className="rounded-xl px-2 py-1.5 text-xs font-semibold text-[#52685A] hover:bg-white disabled:opacity-50"
+                  >
+                    Renombrar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void remove(category.id, category.name)}
+                    disabled={busy}
+                    className="rounded-xl px-2 py-1.5 text-xs font-semibold text-[#A16E63] hover:bg-white disabled:opacity-50"
+                  >
+                    Eliminar
+                  </button>
+                </div>
               </>
             )}
           </div>
