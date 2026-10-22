@@ -2301,7 +2301,7 @@ export default function ShoppingPage() {
         .maybeSingle();
       if (pantryError) throw pantryError;
 
-      const quantityToAdd = item.totalQuantity ?? item.quantity ?? null;
+      const quantityToAdd = item.quantity ?? item.totalQuantity ?? null;
       const unitToAdd = normalizeUnit(item.unit);
 
       if (existing) {
@@ -2356,6 +2356,26 @@ export default function ShoppingPage() {
         if (insertError) throw insertError;
       }
 
+      // Mover el producto significa sacarlo también de la lista de compra.
+      const shoppingId = Number(item.id);
+      if (Number.isFinite(shoppingId)) {
+        const { error: relationDeleteError } = await supabase
+          .from("shopping_list_recipes")
+          .delete()
+          .eq("shopping_list_id", shoppingId);
+        if (relationDeleteError) throw relationDeleteError;
+
+        const { error: shoppingDeleteError } = await supabase
+          .from("shopping_list")
+          .delete()
+          .eq("id", shoppingId)
+          .eq("user_id", user.id);
+        if (shoppingDeleteError) throw shoppingDeleteError;
+      }
+
+      setShoppingItems((current) => current.filter((entry) => entry.id !== item.id));
+      setCheckedItems((current) => current.filter((id) => id !== item.id));
+
       setPantryItems((current) => {
         const found = current.find((entry) => entry.ingredientId === item.ingredientId);
         if (!found) {
@@ -2383,7 +2403,7 @@ export default function ShoppingPage() {
         }
         return current;
       });
-      setActionMessage(`${item.name} se ha añadido al almacén.`);
+      setActionMessage(`${item.ingredientName} se ha movido al almacén y se ha quitado de la compra.`);
     } catch (error) {
       console.error("Error añadiendo producto al almacén:", error);
       setActionMessage("No se ha podido actualizar el almacén. Inténtalo de nuevo.");
@@ -2584,6 +2604,31 @@ export default function ShoppingPage() {
     if (error) throw error;
     setCategories((current) => current.map((category) => category.id === id ? data as ShoppingCategory : category));
     setShoppingItems((current) => current.map((item) => item.category === categories.find((category) => category.id === id)?.name ? { ...item, category: cleanName } : item));
+  }
+
+  async function reorderCategories(orderedIds: number[]) {
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError) throw userError;
+    if (!user) throw new Error("No hay una sesión activa.");
+
+    const previous = categories;
+    const reordered = orderedIds
+      .map((id) => previous.find((category) => category.id === id))
+      .filter((category): category is ShoppingCategory => Boolean(category))
+      .map((category, index) => ({ ...category, sort_order: index }));
+
+    setCategories(reordered);
+    const results = await Promise.all(reordered.map((category) =>
+      supabase.from("shopping_categories")
+        .update({ sort_order: category.sort_order })
+        .eq("id", category.id)
+        .eq("user_id", user.id)
+    ));
+    const failed = results.find((result) => result.error);
+    if (failed?.error) {
+      setCategories(previous);
+      throw failed.error;
+    }
   }
 
   async function deleteCategory(id: number) {
@@ -2897,7 +2942,7 @@ export default function ShoppingPage() {
 
     activeList === "recipe"
 
-      ? recipeItems
+      ? recipeItems.filter((item) => !item.owned)
 
       : manualItems;
 
@@ -3342,7 +3387,7 @@ export default function ShoppingPage() {
 
 
 
-            <div className="space-y-4">
+            <div className="space-y-3">
 
               {categoriesWithItems.map(
 
@@ -3410,7 +3455,7 @@ export default function ShoppingPage() {
 
                                 key={item.id}
 
-                                className="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
+                                className="flex items-center gap-3 py-3.5 first:pt-0 last:pb-0"
 
                               >
 
@@ -3507,24 +3552,7 @@ export default function ShoppingPage() {
                                       </p>
 
                                     )}
-
-
-
-                                  {item.source ===
-
-                                    "manual" && (
-
-                                    <p className="mt-1 text-xs text-[#B0AFA7]">
-
-                                      Añadido manualmente
-
-                                    </p>
-
-                                  )}
-
-
-
-                                  <label className="mt-2 flex items-center gap-2 text-xs text-[#788675]">
+<label className="mt-2 flex items-center gap-2 text-xs text-[#788675]">
                                     <span>Categoría</span>
                                     <select
                                       value={categories.find((category) => category.name === item.category)?.id ?? ""}
@@ -3615,67 +3643,9 @@ export default function ShoppingPage() {
 
         )}
 
-        {/* RESUMEN */}
-
-
-
-        <section className="mb-6 rounded-3xl bg-white px-5 py-4 shadow-sm">
-
-          <div className="flex items-center justify-between gap-4">
-
-            <div>
-
-              <p className="text-sm font-semibold text-[#30352C]">
-
-                {activeList === "recipe"
-
-                  ? "Para tus recetas"
-
-                  : "Añadido por ti"}
-
-              </p>
-
-
-
-              <p className="mt-0.5 text-xs text-[#879078]">
-
-                {checkedCount} de {totalCount}{" "}
-
-                {totalCount === 1
-
-                  ? "producto comprado"
-
-                  : "productos comprados"}
-
-              </p>
-
-            </div>
-
-
-
-            <div className="text-2xl">
-
-              {activeList === "recipe"
-
-                ? "🍲"
-
-                : "✏️"}
-
-            </div>
-
-          </div>
-
-        </section>
-
-
-
-        {/* AÑADIR MANUAL */}
-
-
-
         {activeList === "manual" && (
 
-          <section className="mb-6 rounded-3xl bg-white p-5 shadow-sm">
+          <section className="mt-2 mb-6 rounded-3xl bg-white p-5 shadow-sm sm:mt-12">
 
             <div className="mb-4">
 
@@ -3854,6 +3824,7 @@ export default function ShoppingPage() {
               onCreate={createCategory}
               onRename={renameCategory}
               onDelete={deleteCategory}
+              onReorder={reorderCategories}
             />
           </div>
         </details>
