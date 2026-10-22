@@ -301,6 +301,34 @@ export default function AlmacenPage() {
     }
   }
 
+  async function reorderCategories(orderedIds: number[]) {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (userError) throw userError;
+    if (!user) throw new Error("No hay una sesión activa.");
+
+    const previous = categories;
+    const reordered = orderedIds
+      .map((id) => previous.find((category) => category.id === id))
+      .filter((category): category is ShoppingCategory => Boolean(category))
+      .map((category, index) => ({ ...category, sort_order: index }));
+
+    setCategories(reordered);
+    const results = await Promise.all(reordered.map((category) =>
+      supabase.from("shopping_categories")
+        .update({ sort_order: category.sort_order })
+        .eq("id", category.id)
+        .eq("user_id", user.id)
+    ));
+    const failed = results.find((result) => result.error);
+    if (failed?.error) {
+      setCategories(previous);
+      throw failed.error;
+    }
+  }
+
   async function deleteCategory(id: number) {
     const {
       data: { user },
@@ -603,24 +631,32 @@ export default function AlmacenPage() {
             .eq("id", existing.id)
             .eq("user_id", user.id);
           if (resetError) throw resetError;
-          setShoppingMessage(`${item.name} ya estaba en la lista; lo he vuelto a marcar como pendiente.`);
-        } else {
-          setShoppingMessage(`${item.name} ya está en la lista de compra.`);
         }
-        return;
+      } else {
+        const { error: insertError } = await supabase.from("shopping_list").insert({
+          user_id: user.id,
+          ingredient_id: item.ingredientId,
+          name: item.name,
+          quantity: item.quantity,
+          unit: normalizeUnit(item.unit),
+          checked: false,
+        });
+
+        if (insertError) throw insertError;
       }
 
-      const { error: insertError } = await supabase.from("shopping_list").insert({
-        user_id: user.id,
-        ingredient_id: item.ingredientId,
-        name: item.name,
-        quantity: item.quantity,
-        unit: normalizeUnit(item.unit),
-        checked: false,
-      });
+      // Mover a compra: una vez garantizado que está en la lista, quitarlo del almacén.
+      const { error: removePantryError } = await supabase
+        .from("pantry")
+        .delete()
+        .eq("id", item.id)
+        .eq("user_id", user.id);
+      if (removePantryError) throw removePantryError;
 
-      if (insertError) throw insertError;
-      setShoppingMessage(`${item.name} se ha añadido a «Mi lista».`);
+      setItems((current) => current.filter((entry) => entry.id !== item.id));
+      setShoppingMessage(existing
+        ? `${item.name} se ha movido a la compra; ya no está en el almacén.`
+        : `${item.name} se ha movido a «Mi lista» y se ha quitado del almacén.`);
     } catch (error) {
       console.error("Error pasando ingrediente a la lista de compra:", error);
       setShoppingMessage("No se ha podido añadir el ingrediente. Inténtalo de nuevo.");
@@ -679,7 +715,7 @@ export default function AlmacenPage() {
             <h2 className="text-lg font-semibold">
               {editingId !== null ? "Editar ingrediente" : "Añadir ingrediente"}
             </h2>
-            <p className="mt-1 text-sm text-[#788675]">
+            <p className="mt-0.5 text-xs text-[#788675]">
               Si ya tienes ese ingrediente, puedes actualizar su cantidad.
             </p>
           </div>
@@ -776,6 +812,7 @@ export default function AlmacenPage() {
               onCreate={createCategory}
               onRename={renameCategory}
               onDelete={deleteCategory}
+              onReorder={reorderCategories}
             />
           </div>
         </details>
@@ -829,7 +866,7 @@ export default function AlmacenPage() {
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {categories
                 .filter((category) =>
                   filteredItems.some((item) => item.category === category.name)
@@ -842,9 +879,9 @@ export default function AlmacenPage() {
                   return (
                     <section
                       key={category.id}
-                      className="rounded-3xl bg-white p-4 shadow-sm sm:p-5"
+                      className="rounded-2xl bg-white p-3 shadow-sm sm:p-4"
                     >
-                      <div className="mb-3 flex items-center justify-between">
+                      <div className="mb-2 flex items-center justify-between">
                         <h3 className="font-semibold">{category.name}</h3>
                         <span className="rounded-full bg-[#F0F2EB] px-2.5 py-1 text-xs font-semibold text-[#52685A]">
                           {categoryItems.length}
@@ -855,21 +892,21 @@ export default function AlmacenPage() {
                         {categoryItems.map((item) => (
                           <article
                             key={item.id}
-                            className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0"
+                            className="flex flex-wrap items-center gap-2.5 py-2.5 first:pt-0 last:pb-0"
                           >
-                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#F0F2EB] text-xl">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F0F2EB] text-lg">
                               🥗
                             </div>
 
                             <div className="min-w-0 flex-1">
-                              <h3 className="truncate font-semibold">
+                              <h3 className="truncate text-sm font-semibold">
                                 {item.name}
                               </h3>
-                              <p className="mt-1 text-sm text-[#788675]">
+                              <p className="mt-0.5 text-xs text-[#788675]">
                                 {formatQuantity(item)}
                               </p>
 
-                              <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#788675]">
+                              <label className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-[#788675]">
                                 <span>Categoría</span>
                                 <select
                                   value={
@@ -885,7 +922,7 @@ export default function AlmacenPage() {
                                     )
                                   }
                                   aria-label={`Categoría de ${item.name}`}
-                                  className="max-w-full rounded-xl border border-[#E1DED5] bg-[#FBFAF7] px-2 py-1.5 text-xs text-[#52685A] outline-none focus:border-[#879078]"
+                                  className="max-w-full rounded-lg border border-[#E1DED5] bg-[#FBFAF7] px-2 py-1 text-xs text-[#52685A] outline-none focus:border-[#879078]"
                                 >
                                   {categories.map((option) => (
                                     <option
@@ -901,7 +938,7 @@ export default function AlmacenPage() {
                                 type="button"
                                 onClick={() => void addPantryItemToShoppingList(item)}
                                 disabled={shoppingActionId === item.id}
-                                className="mt-2 rounded-xl bg-[#F0F2EB] px-3 py-2 text-xs font-semibold text-[#52685A] transition hover:bg-[#E2E8DC] disabled:opacity-50"
+                                className="mt-1.5 rounded-lg bg-[#F0F2EB] px-2.5 py-1.5 text-[11px] font-semibold text-[#52685A] transition hover:bg-[#E2E8DC] disabled:opacity-50"
                               >
                                 {shoppingActionId === item.id ? "Añadiendo…" : "Añadir a la compra"}
                               </button>
