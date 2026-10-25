@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { ingredientNamesMatch } from "@/lib/ingredient-availability";
 
 type Recipe = {
   id: string;
@@ -26,6 +27,46 @@ type PantryItem = {
   quantity: number | null;
   unit: string;
 };
+
+async function loadPantryFromSupabase(): Promise<PantryItem[] | null> {
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  if (!user) return null;
+
+  const { data: pantryRows, error: pantryError } = await supabase
+    .from("pantry")
+    .select("id, ingredient_id, quantity, unit")
+    .eq("user_id", user.id)
+    .order("id", { ascending: true });
+  if (pantryError) throw pantryError;
+
+  const rows = (pantryRows ?? []) as {
+    id: number;
+    ingredient_id: number;
+    quantity: number | null;
+    unit: string | null;
+  }[];
+  const ingredientIds = [...new Set(rows.map((row) => Number(row.ingredient_id)).filter(Number.isFinite))];
+  let nameById = new Map<number, string>();
+
+  if (ingredientIds.length) {
+    const { data: ingredients, error: ingredientsError } = await supabase
+      .from("ingredients")
+      .select("id, name")
+      .in("id", ingredientIds);
+    if (ingredientsError) throw ingredientsError;
+    nameById = new Map((ingredients ?? []).map((item) => [Number(item.id), String(item.name ?? "")] as [number, string]));
+  }
+
+  return rows
+    .map((row) => ({
+      id: String(row.id),
+      name: nameById.get(Number(row.ingredient_id)) ?? "",
+      quantity: typeof row.quantity === "number" && Number.isFinite(row.quantity) ? row.quantity : null,
+      unit: row.unit || "unidades",
+    }))
+    .filter((item) => item.name.trim() !== "");
+}
 
 const baseRecipes: Recipe[] = [
   {
@@ -645,20 +686,9 @@ function pantryMatchesIngredient(
   ingredient: string,
   pantry: PantryItem
 ) {
-  const ingredientName =
-    getComparableIngredientName(ingredient);
-
-  const pantryName =
-    getComparableIngredientName(pantry.name);
-
-  if (!ingredientName || !pantryName) {
-    return false;
-  }
-
-  return (
-    ingredientName === pantryName ||
-    ingredientName.includes(pantryName) ||
-    pantryName.includes(ingredientName)
+  return ingredientNamesMatch(
+    parseIngredient(ingredient).name,
+    pantry.name
   );
 }
 
@@ -1889,6 +1919,14 @@ export default function RecipeDetailPage({
             normalizedPantry
           );
         }
+
+        // Supabase es la fuente principal del almacén; localStorage queda como respaldo.
+        try {
+          const supabasePantry = await loadPantryFromSupabase();
+          if (supabasePantry !== null) setPantryItems(supabasePantry);
+        } catch (pantryError) {
+          console.error("Error cargando el almacén desde Supabase:", pantryError);
+        }
       } catch (error) {
         console.error(
           "Error cargando receta:",
@@ -2016,63 +2054,29 @@ export default function RecipeDetailPage({
       }
     }
 
-    function syncPantry() {
-      const storedPantry =
-        safeParseArray(
-          localStorage.getItem(
-            "pantryItems"
-          )
-        );
+    async function syncPantry() {
+      try {
+        const supabasePantry = await loadPantryFromSupabase();
+        if (supabasePantry !== null) {
+          setPantryItems(supabasePantry);
+          return;
+        }
+      } catch (error) {
+        console.error("Error sincronizando almacén desde Supabase:", error);
+      }
 
-      const normalizedPantry =
-        storedPantry
-          .filter(
-            (
-              item
-            ): item is Record<
-              string,
-              unknown
-            > =>
-              Boolean(
-                item &&
-                typeof item ===
-                  "object"
-              )
-          )
-          .map((item) => ({
-            id:
-              typeof item.id ===
-              "string"
-                ? item.id
-                : crypto.randomUUID(),
-            name:
-              typeof item.name ===
-              "string"
-                ? item.name
-                : "",
-            quantity:
-              typeof item.quantity ===
-                "number" &&
-              Number.isFinite(
-                item.quantity
-              )
-                ? item.quantity
-                : null,
-            unit:
-              typeof item.unit ===
-              "string"
-                ? item.unit
-                : "unidades",
-          }))
-          .filter(
-            (item) =>
-              item.name.trim() !==
-              ""
-          );
-
-      setPantryItems(
-        normalizedPantry
-      );
+      // Respaldo para sesiones sin usuario o si Supabase no responde.
+      const storedPantry = safeParseArray(localStorage.getItem("pantryItems"));
+      const normalizedPantry = storedPantry
+        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+        .map((item) => ({
+          id: typeof item.id === "string" ? item.id : crypto.randomUUID(),
+          name: typeof item.name === "string" ? item.name : "",
+          quantity: typeof item.quantity === "number" && Number.isFinite(item.quantity) ? item.quantity : null,
+          unit: typeof item.unit === "string" ? item.unit : "unidades",
+        }))
+        .filter((item) => item.name.trim() !== "");
+      setPantryItems(normalizedPantry);
     }
 
     function syncFromStorage() {

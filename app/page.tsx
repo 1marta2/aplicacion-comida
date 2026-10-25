@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { baseRecipes, getCategoryStyle, type Recipe } from "@/lib/recipes";
+import { getComparableIngredientName, ingredientNamesMatch, isIngredientAvailable } from "@/lib/ingredient-availability";
 
 const DAYS = [
   "Lunes",
@@ -169,24 +170,11 @@ function safeRecipeArray(key: string): Recipe[] {
 }
 
 function ingredientBaseName(value: string) {
-  return normalize(
-    value
-      .replace(
-        /^\s*\d+(?:[.,]\d+)?\s*(?:g|gr|kg|ml|cl|l|unidad(?:es)?|cucharadas?|cucharaditas?|tazas?)?\s*/i,
-        "",
-      )
-      .replace(/^de\s+/i, "")
-      .replace(/,.*$/, ""),
-  );
+  return getComparableIngredientName(value.replace(/,.*$/, ""));
 }
 
 function ingredientMatches(first: string, second: string) {
-  const a = ingredientBaseName(first);
-  const b = ingredientBaseName(second);
-
-  if (!a || !b) return false;
-
-  return a === b || a.includes(b) || b.includes(a);
+  return ingredientNamesMatch(first, second);
 }
 
 function getRecipeIngredients(recipe: Recipe): string[] {
@@ -391,7 +379,14 @@ export default function HomePage() {
         }
 
         const namesInPantry = pantryIngredients.map((item) => item.name);
-        const normalizedPantry = new Set(namesInPantry.map(normalize));
+        const pantryNameById = new Map(
+          pantryIngredients.map((item) => [Number(item.id), item.name] as [number, string]),
+        );
+        const pantryAvailability = pantryRows.map((row) => ({
+          name: pantryNameById.get(Number(row.ingredient_id)) || "",
+          quantity: typeof row.quantity === "number" && Number.isFinite(row.quantity) ? row.quantity : null,
+          unit: row.unit || null,
+        })).filter((item) => item.name.trim() !== "");
 
         // Ingredientes de las recetas que están guardadas en Supabase.
         const recipeIds = recipeRows.map((row) => row.id);
@@ -456,7 +451,10 @@ export default function HomePage() {
           const current =
             ingredientsByRecipe.get(Number(row.recipe_id)) ?? [];
 
-          current.push(name);
+          const formattedIngredient = row.quantity !== null && row.quantity !== undefined
+            ? `${row.quantity}${row.unit ? ` ${row.unit}` : ""} ${name}`.trim()
+            : name;
+          current.push(formattedIngredient);
           ingredientsByRecipe.set(Number(row.recipe_id), current);
         }
 
@@ -483,15 +481,8 @@ export default function HomePage() {
 
             const missing = uniqueIngredients.filter((ingredient) => {
               const name = ingredientBaseName(ingredient);
-
               if (!name) return false;
-
-              return ![...normalizedPantry].some(
-                (pantryName) =>
-                  pantryName === name ||
-                  pantryName.includes(name) ||
-                  name.includes(pantryName),
-              );
+              return !isIngredientAvailable(ingredient, pantryAvailability);
             });
 
             return {
