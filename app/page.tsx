@@ -1,36 +1,13 @@
+
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+import { baseRecipes, getCategoryStyle, type Recipe } from "@/lib/recipes";
 
-const recipes = {
-  "pasta-cremosa": {
-    name: "Pasta cremosa",
-    emoji: "🍝",
-  },
-  "ensalada-mediterranea": {
-    name: "Ensalada mediterránea",
-    emoji: "🥗",
-  },
-  "arroz-con-verduras": {
-    name: "Arroz con verduras",
-    emoji: "🍚",
-  },
-  "lentejas-caseras": {
-    name: "Lentejas caseras",
-    emoji: "🥣",
-  },
-  "pollo-al-horno": {
-    name: "Pollo al horno",
-    emoji: "🍗",
-  },
-  "salmon-con-patata": {
-    name: "Salmón con patata",
-    emoji: "🐟",
-  },
-};
-
-const days = [
+const DAYS = [
   "Lunes",
   "Martes",
   "Miércoles",
@@ -40,734 +17,1057 @@ const days = [
   "Domingo",
 ];
 
-type Planner = {
-  [day: string]: {
-    [meal: string]: string | string[] | null;
-  };
+const MEALS = ["Comida", "Cena"] as const;
+
+const CATEGORY_NAMES: Record<number, string> = {
+  1: "Desayuno",
+  2: "Comida",
+  3: "Cena",
+  4: "Postres",
+  5: "Snacks",
+  6: "Ensaladas",
+  7: "Pasta",
+  8: "Arroces",
+  9: "Carne",
+  10: "Pescado",
+  11: "Legumbres",
+  12: "Otros",
 };
 
-type HomeRecipe = {
-  id: string;
-  name: string;
-  emoji?: string;
-  ingredients?: string[];
+type RecipeRow = {
+  id: number;
+  title: string;
+  description: string | null;
+  preparation_time: number | null;
+  difficulty?: string | null;
+  servings: number | null;
+  instructions: string | null;
+  category_id: number | null;
+  created_at?: string | null;
 };
 
-type PantryItem = {
-  id: string;
-  name: string;
+type PlanRow = {
+  date: string;
+  meal_type: string;
+  recipe_id: number | null;
+  is_outside?: boolean | null;
+};
+
+type PantryRow = {
+  id: number;
+  ingredient_id: number;
   quantity: number | null;
-  unit: string;
+  unit: string | null;
 };
 
-type CookingSuggestion = {
-  recipe: HomeRecipe;
+type IngredientRow = {
+  id: number;
+  name: string;
+};
+
+type RecipeIngredientRow = {
+  recipe_id: number;
+  ingredient_id: number;
+  quantity?: number | null;
+  unit?: string | null;
+};
+
+type WeekMeal = {
+  date: string;
+  day: string;
+  meal: string;
+  recipe: Recipe | null;
+  outside: boolean;
+};
+
+type Suggestion = {
+  recipe: Recipe;
+  ingredients: string[];
   missing: string[];
+  availableCount: number;
 };
 
-function normalizeIngredientName(value: string) {
+type IdeaMode = "almacen" | "ingredientes";
+
+function normalize(value: string) {
   return value
-    .toLowerCase()
+    .toLocaleLowerCase("es-ES")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(
-      /^(?:\d+(?:[.,]\d+)?(?:\s*\/\s*\d+)?)\s*(?:g|gr|kg|ml|l|cl|dl|unidad|unidades|ud|uds)?\s*(?:de\s+|del\s+)?/i,
-      ""
-    )
-    .trim()
-    .replace(/\s+/g, " ");
+    .trim();
 }
 
-function getIngredientName(ingredient: string) {
-  return normalizeIngredientName(ingredient);
+function dateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function pantryMatchesIngredient(
-  ingredient: string,
-  pantry: PantryItem
-) {
-  const ingredientName = getIngredientName(ingredient);
-  const pantryName = normalizeIngredientName(pantry.name);
+function getMonday(date: Date) {
+  const monday = new Date(date);
+  const day = monday.getDay();
 
-  if (!ingredientName || !pantryName) {
-    return false;
+  monday.setDate(day === 0 ? -6 + monday.getDate() : monday.getDate() + 1 - day);
+  monday.setHours(0, 0, 0, 0);
+
+  return monday;
+}
+
+function toRecipe(row: RecipeRow): Recipe {
+  const category = CATEGORY_NAMES[row.category_id ?? 12] ?? "Otros";
+  const style = getCategoryStyle(category);
+
+  return {
+    id: String(row.id),
+    name: row.title,
+    category,
+    time: row.preparation_time ? `${row.preparation_time} min` : "",
+    difficulty: row.difficulty || "Fácil",
+    emoji: style.emoji || "🍽️",
+    ingredients: [],
+    steps: row.instructions
+      ? row.instructions.split("\n").map((step) => step.trim()).filter(Boolean)
+      : [],
+    servings: row.servings || 2,
+    description: row.description || "",
+    color: style.color,
+  };
+}
+
+function recipeHref(recipe: Recipe) {
+  return `/recetas/${encodeURIComponent(String(recipe.id))}`;
+}
+
+function safeRecipeArray(key: string): Recipe[] {
+  try {
+    const raw = localStorage.getItem(key);
+
+    if (!raw) return [];
+
+    const parsed: unknown = JSON.parse(raw);
+
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .filter(
+        (item): item is Recipe =>
+          Boolean(
+            item &&
+              typeof item === "object" &&
+              typeof (item as Recipe).id === "string" &&
+              typeof (item as Recipe).name === "string",
+          ),
+      )
+      .map((item) => ({
+        ...item,
+        ingredients: Array.isArray(item.ingredients) ? item.ingredients : [],
+        steps: Array.isArray(item.steps) ? item.steps : [],
+        category: item.category || "Otros",
+        emoji: item.emoji || "🍽️",
+      }));
+  } catch {
+    return [];
   }
+}
 
-  return (
-    ingredientName === pantryName ||
-    ingredientName.includes(pantryName) ||
-    pantryName.includes(ingredientName)
+function ingredientBaseName(value: string) {
+  return normalize(
+    value
+      .replace(
+        /^\s*\d+(?:[.,]\d+)?\s*(?:g|gr|kg|ml|cl|l|unidad(?:es)?|cucharadas?|cucharaditas?|tazas?)?\s*/i,
+        "",
+      )
+      .replace(/^de\s+/i, "")
+      .replace(/,.*$/, ""),
   );
 }
 
-function getRecipeIds(value: string | string[] | null | undefined) {
-  if (!value) {
-    return [];
-  }
+function ingredientMatches(first: string, second: string) {
+  const a = ingredientBaseName(first);
+  const b = ingredientBaseName(second);
 
-  if (Array.isArray(value)) {
-    return value;
-  }
+  if (!a || !b) return false;
 
-  return [value];
+  return a === b || a.includes(b) || b.includes(a);
+}
+
+function getRecipeIngredients(recipe: Recipe): string[] {
+  if (!Array.isArray(recipe.ingredients)) return [];
+
+  return [
+    ...new Set(
+      recipe.ingredients
+        .map((ingredient) => String(ingredient).trim())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 export default function HomePage() {
-  const [planner, setPlanner] = useState<Planner>({});
-  const [today, setToday] = useState("Lunes");
+  const router = useRouter();
 
-  const [availableRecipes, setAvailableRecipes] =
-    useState<HomeRecipe[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [latestRecipes, setLatestRecipes] = useState<Recipe[]>([]);
+  const [weekMeals, setWeekMeals] = useState<WeekMeal[]>([]);
+  const [allSuggestions, setAllSuggestions] = useState<Suggestion[]>([]);
+  const [pantryNames, setPantryNames] = useState<string[]>([]);
+  const [shoppingCount, setShoppingCount] = useState(0);
+  const [pantryCount, setPantryCount] = useState(0);
+  const [error, setError] = useState("");
 
-  const [pantryItems, setPantryItems] = useState<PantryItem[]>(
-    []
-  );
+  const [ideaMode, setIdeaMode] = useState<IdeaMode>("almacen");
+  const [ingredientInput, setIngredientInput] = useState("");
 
-  const [cookingSuggestions, setCookingSuggestions] =
-    useState<CookingSuggestion[]>([]);
+  const today = useMemo(() => new Date(), []);
+  const monday = useMemo(() => getMonday(today), [today]);
 
-  useEffect(() => {
-    const loadHomeData = () => {
-      const savedPlanner = localStorage.getItem("planner");
+  const sunday = useMemo(() => {
+    const date = new Date(monday);
+    date.setDate(date.getDate() + 6);
+    return date;
+  }, [monday]);
 
-      if (savedPlanner) {
-        try {
-          setPlanner(JSON.parse(savedPlanner));
-        } catch {
-          setPlanner({});
-        }
-      }
+  const todayKey = dateKey(today);
 
-      const savedRecipes = localStorage.getItem("recipes");
-      const savedImportedRecipes =
-        localStorage.getItem("importedRecipes");
+  const todayName =
+    DAYS[today.getDay() === 0 ? 6 : today.getDay() - 1];
 
-      const customRecipes: HomeRecipe[] = savedRecipes
-        ? JSON.parse(savedRecipes)
-        : [];
+  const tomorrowName = DAYS[(DAYS.indexOf(todayName) + 1) % 7];
 
-      const importedRecipes: HomeRecipe[] =
-        savedImportedRecipes
-          ? JSON.parse(savedImportedRecipes)
-          : [];
-
-      const combinedRecipes = [
-        ...Object.entries(recipes).map(
-          ([id, recipe]) => ({
-            id,
-            ...recipe,
-          })
-        ),
-        ...customRecipes,
-        ...importedRecipes,
-      ];
-
-      const uniqueRecipes = Array.from(
-        new Map(
-          combinedRecipes.map((recipe) => [
-            recipe.id,
-            recipe,
-          ])
-        ).values()
-      );
-
-      setAvailableRecipes(uniqueRecipes);
-
-      const savedPantry = localStorage.getItem("pantryItems");
-
-      if (savedPantry) {
-        try {
-          setPantryItems(JSON.parse(savedPantry));
-        } catch {
-          setPantryItems([]);
-        }
-      } else {
-        setPantryItems([]);
-      }
-
-      const currentDay = new Date().getDay();
-
-      const dayNames = [
-        "Domingo",
-        "Lunes",
-        "Martes",
-        "Miércoles",
-        "Jueves",
-        "Viernes",
-        "Sábado",
-      ];
-
-      setToday(dayNames[currentDay]);
-    };
-
-    loadHomeData();
-
-    window.addEventListener(
-      "storage",
-      loadHomeData
-    );
-
-    window.addEventListener(
-      "favoritesChanged",
-      loadHomeData
-    );
-
-    window.addEventListener(
-      "pantryChanged",
-      loadHomeData
-    );
-
-    return () => {
-      window.removeEventListener(
-        "storage",
-        loadHomeData
-      );
-
-      window.removeEventListener(
-        "favoritesChanged",
-        loadHomeData
-      );
-
-      window.removeEventListener(
-        "pantryChanged",
-        loadHomeData
-      );
-    };
-  }, []);
+  const dateLabel = today.toLocaleDateString("es-ES", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
 
   useEffect(() => {
-    if (availableRecipes.length === 0) {
-      setCookingSuggestions([]);
-      return;
-    }
+    let cancelled = false;
 
-    const suggestions: CookingSuggestion[] =
-      availableRecipes.map((recipe) => {
-        const ingredients = recipe.ingredients || [];
+    async function loadHome() {
+      setLoading(true);
+      setError("");
 
-        if (ingredients.length === 0) {
-          return {
-            recipe,
-            missing: [],
-          };
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+
+        if (userError) throw userError;
+
+        if (!user) {
+          if (!cancelled) router.replace("/login");
+          return;
         }
 
-        const missing = ingredients
-          .filter((ingredient) => {
-            const matchingPantry = pantryItems.find(
-              (pantry) =>
-                pantryMatchesIngredient(
-                  ingredient,
-                  pantry
-                )
+        const [
+          recipeResult,
+          planResult,
+          pantryResult,
+          shoppingResult,
+        ] = await Promise.all([
+          supabase
+            .from("recipes")
+            .select(
+              "id,title,description,preparation_time,difficulty,servings,instructions,category_id,created_at",
+            )
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: false }),
+
+          supabase
+            .from("planning")
+            .select("date,meal_type,recipe_id,is_outside")
+            .eq("user_id", user.id)
+            .gte("date", dateKey(monday))
+            .lte("date", dateKey(sunday)),
+
+          supabase
+            .from("pantry")
+            .select("id,ingredient_id,quantity,unit")
+            .eq("user_id", user.id),
+
+          supabase
+            .from("shopping_list")
+            .select("id,checked")
+            .eq("user_id", user.id),
+        ]);
+
+        if (recipeResult.error) throw recipeResult.error;
+        if (planResult.error) throw planResult.error;
+        if (pantryResult.error) throw pantryResult.error;
+        if (shoppingResult.error) throw shoppingResult.error;
+
+        const recipeRows = (recipeResult.data ?? []) as RecipeRow[];
+        const customRecipes = recipeRows.map(toRecipe);
+
+        // Conservamos también las recetas importadas o locales existentes.
+        const localRecipes =
+          typeof window !== "undefined"
+            ? [
+                ...safeRecipeArray("recipes"),
+                ...safeRecipeArray("importedRecipes"),
+              ]
+            : [];
+
+        const allRecipes: Recipe[] = [
+          ...customRecipes,
+          ...localRecipes,
+          ...baseRecipes,
+        ];
+
+        // Evitamos repetir recetas con el mismo identificador.
+        const byId = new Map<string, Recipe>();
+
+        for (const recipe of allRecipes) {
+          if (!byId.has(String(recipe.id))) {
+            byId.set(String(recipe.id), recipe);
+          }
+        }
+
+        // Resumen semanal de comidas y cenas.
+        const planningRows = (planResult.data ?? []) as PlanRow[];
+        const week: WeekMeal[] = [];
+
+        for (let index = 0; index < 7; index++) {
+          const date = new Date(monday);
+          date.setDate(monday.getDate() + index);
+
+          const key = dateKey(date);
+
+          for (const meal of MEALS) {
+            const row = planningRows.find(
+              (item) =>
+                item.date === key &&
+                item.meal_type.toLowerCase() === meal.toLowerCase(),
             );
 
-            return !matchingPantry;
+            const recipe =
+              row?.recipe_id != null
+                ? byId.get(String(row.recipe_id)) ?? null
+                : null;
+
+            week.push({
+              date: key,
+              day: DAYS[index],
+              meal,
+              recipe,
+              outside: Boolean(row?.is_outside),
+            });
+          }
+        }
+
+        // Ingredientes que hay actualmente en el almacén.
+        const pantryRows = (pantryResult.data ?? []) as PantryRow[];
+
+        const pantryIngredientIds = [
+          ...new Set(
+            pantryRows
+              .map((row) => Number(row.ingredient_id))
+              .filter(Number.isFinite),
+          ),
+        ];
+
+        let pantryIngredients: IngredientRow[] = [];
+
+        if (pantryIngredientIds.length) {
+          const {
+            data,
+            error: ingredientsError,
+          } = await supabase
+            .from("ingredients")
+            .select("id,name")
+            .in("id", pantryIngredientIds);
+
+          if (ingredientsError) throw ingredientsError;
+
+          pantryIngredients = (data ?? []) as IngredientRow[];
+        }
+
+        const namesInPantry = pantryIngredients.map((item) => item.name);
+        const normalizedPantry = new Set(namesInPantry.map(normalize));
+
+        // Ingredientes de las recetas que están guardadas en Supabase.
+        const recipeIds = recipeRows.map((row) => row.id);
+
+        let recipeIngredientRows: RecipeIngredientRow[] = [];
+
+        if (recipeIds.length) {
+          const {
+            data,
+            error: recipeIngredientsError,
+          } = await supabase
+            .from("recipe_ingredients")
+            .select("recipe_id,ingredient_id,quantity,unit")
+            .in("recipe_id", recipeIds);
+
+          if (recipeIngredientsError) throw recipeIngredientsError;
+
+          recipeIngredientRows =
+            (data ?? []) as RecipeIngredientRow[];
+        }
+
+        const allIngredientIds = [
+          ...new Set(
+            recipeIngredientRows
+              .map((row) => Number(row.ingredient_id))
+              .filter(Number.isFinite),
+          ),
+        ];
+
+        let allIngredientRows: IngredientRow[] = [];
+
+        if (allIngredientIds.length) {
+          const {
+            data,
+            error: ingredientError,
+          } = await supabase
+            .from("ingredients")
+            .select("id,name")
+            .in("id", allIngredientIds);
+
+          if (ingredientError) throw ingredientError;
+
+          allIngredientRows = (data ?? []) as IngredientRow[];
+        }
+
+        const ingredientNameById = new Map(
+          allIngredientRows.map((item) => [
+            Number(item.id),
+            item.name,
+          ]),
+        );
+
+        const ingredientsByRecipe = new Map<number, string[]>();
+
+        for (const row of recipeIngredientRows) {
+          const name = ingredientNameById.get(
+            Number(row.ingredient_id),
+          );
+
+          if (!name) continue;
+
+          const current =
+            ingredientsByRecipe.get(Number(row.recipe_id)) ?? [];
+
+          current.push(name);
+          ingredientsByRecipe.set(Number(row.recipe_id), current);
+        }
+
+        // Creamos una lista única de ingredientes por receta.
+        const scored: Suggestion[] = allRecipes
+          .map((recipe) => {
+            const numericId = Number(recipe.id);
+
+            const relationalIngredients = Number.isFinite(numericId)
+              ? ingredientsByRecipe.get(numericId) ?? []
+              : [];
+
+            const sourceIngredients = relationalIngredients.length
+              ? relationalIngredients
+              : getRecipeIngredients(recipe);
+
+            const uniqueIngredients = [
+              ...new Set(
+                sourceIngredients
+                  .map((item) => String(item).trim())
+                  .filter(Boolean),
+              ),
+            ];
+
+            const missing = uniqueIngredients.filter((ingredient) => {
+              const name = ingredientBaseName(ingredient);
+
+              if (!name) return false;
+
+              return ![...normalizedPantry].some(
+                (pantryName) =>
+                  pantryName === name ||
+                  pantryName.includes(name) ||
+                  name.includes(pantryName),
+              );
+            });
+
+            return {
+              recipe: {
+                ...recipe,
+                ingredients: uniqueIngredients,
+              },
+              ingredients: uniqueIngredients,
+              missing,
+              availableCount: uniqueIngredients.length - missing.length,
+            };
           })
-          .map((ingredient) => {
-            return getIngredientName(ingredient);
-          });
+          .filter((item) => item.ingredients.length > 0)
+          .filter(
+            (item, index, array) =>
+              array.findIndex(
+                (other) =>
+                  String(other.recipe.id) === String(item.recipe.id),
+              ) === index,
+          );
+
+        scored.sort(
+          (a, b) =>
+            a.missing.length - b.missing.length ||
+            b.availableCount - a.availableCount,
+        );
+
+        const uncheckedCount = (
+          (shoppingResult.data ?? []) as {
+            id: number;
+            checked: boolean | null;
+          }[]
+        ).filter((item) => !item.checked).length;
+
+        if (cancelled) return;
+
+        setLatestRecipes(customRecipes.slice(0, 4));
+        setWeekMeals(week);
+        setAllSuggestions(scored);
+        setPantryNames(namesInPantry);
+        setShoppingCount(uncheckedCount);
+        setPantryCount(pantryRows.length);
+      } catch (loadError) {
+        console.error("Error cargando el inicio de Mi cocina:", loadError);
+
+        if (!cancelled) {
+          setError(
+            "No se ha podido cargar toda la información. Prueba a actualizar la página.",
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadHome();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [monday, sunday, router]);
+
+  // La búsqueda se actualiza sin volver a consultar la base de datos.
+  const visibleSuggestions = useMemo(() => {
+    if (ideaMode === "almacen") {
+      return [...allSuggestions]
+        .sort(
+          (a, b) =>
+            a.missing.length - b.missing.length ||
+            b.availableCount - a.availableCount,
+        )
+        .slice(0, 3);
+    }
+
+    const chosenIngredients = ingredientInput
+      .split(/[,;\n]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    if (!chosenIngredients.length) return [];
+
+    return allSuggestions
+      .map((item) => {
+        const matched = item.ingredients.filter((ingredient) =>
+          chosenIngredients.some((chosen) =>
+            ingredientMatches(ingredient, chosen),
+          ),
+        );
 
         return {
-          recipe,
-          missing,
+          ...item,
+          matchedCount: matched.length,
         };
-      });
-
-    const sortedSuggestions = suggestions
-      .sort((a, b) => {
-        if (
-          a.missing.length === 0 &&
-          b.missing.length > 0
-        ) {
-          return -1;
-        }
-
-        if (
-          a.missing.length > 0 &&
-          b.missing.length === 0
-        ) {
-          return 1;
-        }
-
-        return (
-          a.missing.length -
-          b.missing.length
-        );
       })
+      .filter((item) => item.matchedCount > 0)
+      .sort(
+        (a, b) =>
+          b.matchedCount - a.matchedCount ||
+          a.ingredients.length - b.ingredients.length,
+      )
       .slice(0, 3);
+  }, [allSuggestions, ideaMode, ingredientInput]);
 
-    setCookingSuggestions(sortedSuggestions);
-  }, [availableRecipes, pantryItems]);
+  const plannedMealsCount = weekMeals.filter(
+    (item) => item.recipe || item.outside,
+  ).length;
 
-  const todayMeals = planner[today] || {
-    Comida: null,
-    Cena: null,
-  };
-
-  const getRecipe = (recipeId: string | null) => {
-    if (!recipeId) return null;
-
-    return (
-      recipes[
-        recipeId as keyof typeof recipes
-      ] || null
-    );
-  };
-
-  const lunchRecipe = getRecipe(
-    Array.isArray(todayMeals.Comida)
-      ? todayMeals.Comida[0] || null
-      : todayMeals.Comida
-  );
-
-  const dinnerRecipe = getRecipe(
-    Array.isArray(todayMeals.Cena)
-      ? todayMeals.Cena[0] || null
-      : todayMeals.Cena
-  );
-
-  const lunchRecipeId = Array.isArray(
-    todayMeals.Comida
-  )
-    ? todayMeals.Comida[0]
-    : todayMeals.Comida;
-
-  const dinnerRecipeId = Array.isArray(
-    todayMeals.Cena
-  )
-    ? todayMeals.Cena[0]
-    : todayMeals.Cena;
-
-  const plannedDays = days.filter(
-    (day) =>
-      getRecipeIds(planner[day]?.Comida).length > 0 ||
-      getRecipeIds(planner[day]?.Cena).length > 0
-  );
-
-  const totalPlannedMeals = days.reduce(
-    (total, day) => {
-      const meals = planner[day];
-
-      if (!meals) return total;
-
+  function displayMeal(item: WeekMeal) {
+    if (item.outside) {
       return (
-        total +
-        (getRecipeIds(meals.Comida).length > 0
-          ? 1
-          : 0) +
-        (getRecipeIds(meals.Cena).length > 0
-          ? 1
-          : 0)
+        <span className="font-medium text-[#52685A]">
+          🍴 Comida fuera
+        </span>
       );
-    },
-    0
-  );
+    }
+
+    if (item.recipe) {
+      return (
+        <Link
+          href={recipeHref(item.recipe)}
+          className="font-medium text-[#26352D] hover:text-[#52685A]"
+        >
+          {item.recipe.emoji || "🍽️"} {item.recipe.name}
+        </Link>
+      );
+    }
+
+    return <span className="text-[#9A9D94]">Sin planificar</span>;
+  }
 
   return (
-    <main className="min-h-screen bg-[#F7F5EF] text-[#26352D]">
-      <div className="mx-auto max-w-6xl px-6 py-8">
+    <main className="min-h-screen bg-[#F7F5EF] px-4 pb-28 pt-6 text-[#26352D] sm:px-6 lg:px-10">
+      <div className="mx-auto max-w-6xl space-y-8">
+        {/* 1. BIENVENIDA */}
+        <header className="relative overflow-hidden rounded-[2rem] bg-[#E8EEE8] px-6 py-7 sm:px-9 sm:py-9">
+          <div className="pointer-events-none absolute -right-8 -top-12 h-48 w-48 rounded-full bg-white/35" />
 
-        {/* CABECERA */}
-        <header className="flex items-start justify-between">
-          <div>
-            <p className="text-sm font-medium text-[#8A968E]">
-              Tu espacio de cocina
-            </p>
+          <div className="relative flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
+            <div>
+              <p className="mb-2 text-sm font-semibold capitalize tracking-wide text-[#647568]">
+                {dateLabel}
+              </p>
 
-            <h1 className="mt-1 text-4xl font-bold tracking-tight">
-              Hola 👋
-            </h1>
+              <p className="text-sm font-medium text-[#52685A]">
+                Tu cocina, a tu manera
+              </p>
 
-            <p className="mt-2 text-sm text-[#89928C]">
-              Organiza tus comidas de forma sencilla.
-            </p>
-          </div>
+              <h1 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
+                Hola, ¡vamos a cocinar! <span aria-hidden="true">🍲</span>
+              </h1>
 
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#DDE8DF] text-xl">
-            🍽️
+              <p className="mt-3 max-w-xl text-sm leading-6 text-[#657166] sm:text-base">
+                Organiza tus comidas, aprovecha lo que tienes en casa y
+                encuentra inspiración para hoy.
+              </p>
+            </div>
+
+            <Link
+              href="/recetas"
+              className="inline-flex w-fit items-center gap-2 rounded-full bg-[#52685A] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#405447]"
+            >
+              Explorar recetas <span aria-hidden="true">→</span>
+            </Link>
           </div>
         </header>
 
-        {/* HOY */}
-        <section className="mt-8">
-          <div className="flex items-end justify-between">
-            <div>
-              <p className="text-sm font-medium text-[#8A968E]">
-                Hoy
-              </p>
+        {error && (
+          <div
+            role="status"
+            className="rounded-2xl border border-[#E6D7C7] bg-white px-4 py-3 text-sm text-[#765D48]"
+          >
+            {error}
+          </div>
+        )}
 
-              <h2 className="mt-1 text-2xl font-semibold">
-                {today}
-              </h2>
+        {/* 2. TU SEMANA */}
+        <section>
+          <div className="mb-4 flex items-end justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#849083]">
+                Organízate sin agobios
+              </p>
+              <h2 className="mt-1 text-2xl font-semibold">Tu semana</h2>
             </div>
 
             <Link
               href="/planificador"
-              className="text-sm font-medium text-[#52685A] underline"
+              className="shrink-0 text-sm font-semibold text-[#52685A] hover:underline"
             >
-              Ver planificador
+              Ver planificador →
             </Link>
           </div>
 
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {loading
+              ? Array.from({ length: 4 }).map((_, index) => (
+                  <div
+                    key={index}
+                    className="h-36 animate-pulse rounded-3xl bg-white"
+                  />
+                ))
+              : weekMeals
+                  .filter(
+                    (item) =>
+                      item.day === todayName ||
+                      item.day === tomorrowName,
+                  )
+                  .map((item) => (
+                    <div
+                      key={`${item.date}-${item.meal}`}
+                      className={`rounded-3xl border p-4 ${
+                        item.date === todayKey
+                          ? "border-[#CAD8CB] bg-white shadow-sm"
+                          : "border-[#E8E5DC] bg-[#FBFAF6]"
+                      }`}
+                    >
+                      <div className="mb-3 flex items-center justify-between">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-[#829083]">
+                          {item.date === todayKey ? "Hoy" : item.day}
+                        </span>
 
-            {/* COMIDA */}
-            <div className="rounded-3xl bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F7F5EF]">
-                  ☀️
-                </span>
+                        <span className="rounded-full bg-[#F0F2EC] px-2.5 py-1 text-xs text-[#667567]">
+                          {item.meal}
+                        </span>
+                      </div>
 
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-[#89928C]">
-                    Comida
-                  </p>
-                </div>
-              </div>
+                      <div className="min-h-10 text-sm leading-5">
+                        {displayMeal(item)}
+                      </div>
 
-              {lunchRecipe ? (
-                <div className="mt-5">
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#E6E0D3] text-3xl">
-                      {lunchRecipe.emoji}
+                      {item.date === todayKey && (
+                        <p className="mt-3 text-[11px] text-[#9A9D94]">
+                          Tu plan de hoy
+                        </p>
+                      )}
                     </div>
-
-                    <div>
-                      <p className="font-semibold">
-                        {lunchRecipe.name}
-                      </p>
-
-                      <Link
-                        href={`/recetas/${lunchRecipeId}`}
-                        className="mt-1 inline-block text-xs text-[#52685A] underline"
-                      >
-                        Ver receta
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-5">
-                  <p className="font-semibold">
-                    Todavía no hay nada
-                  </p>
-
-                  <p className="mt-1 text-sm text-[#89928C]">
-                    ¿Qué te apetece comer?
-                  </p>
-
-                  <Link
-                    href="/planificador"
-                    className="mt-4 inline-block rounded-xl bg-[#DDE8DF] px-4 py-2 text-xs font-semibold text-[#52685A]"
-                  >
-                    + Añadir comida
-                  </Link>
-                </div>
-              )}
-            </div>
-
-            {/* CENA */}
-            <div className="rounded-3xl bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F7F5EF]">
-                  🌙
-                </span>
-
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-[#89928C]">
-                    Cena
-                  </p>
-                </div>
-              </div>
-
-              {dinnerRecipe ? (
-                <div className="mt-5">
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#E6E0D3] text-3xl">
-                      {dinnerRecipe.emoji}
-                    </div>
-
-                    <div>
-                      <p className="font-semibold">
-                        {dinnerRecipe.name}
-                      </p>
-
-                      <Link
-                        href={`/recetas/${dinnerRecipeId}`}
-                        className="mt-1 inline-block text-xs text-[#52685A] underline"
-                      >
-                        Ver receta
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-5">
-                  <p className="font-semibold">
-                    Todavía no hay nada
-                  </p>
-
-                  <p className="mt-1 text-sm text-[#89928C]">
-                    Puedes planificarla ahora.
-                  </p>
-
-                  <Link
-                    href="/planificador"
-                    className="mt-4 inline-block rounded-xl bg-[#DDE8DF] px-4 py-2 text-xs font-semibold text-[#52685A]"
-                  >
-                    + Añadir cena
-                  </Link>
-                </div>
-              )}
-            </div>
-
+                  ))}
           </div>
+
+          {!loading && (
+            <div className="mt-3 flex items-center justify-between rounded-2xl bg-[#F0EEE6] px-4 py-3 text-sm">
+              <span className="text-[#697368]">
+                Comidas y cenas organizadas esta semana
+              </span>
+              <span className="font-semibold text-[#52685A]">
+                {plannedMealsCount} de 14
+              </span>
+            </div>
+          )}
         </section>
 
-        {/* RESUMEN DE LA SEMANA */}
-        <section className="mt-8 rounded-3xl bg-[#E6E0D3] p-6">
-          <div className="flex items-center justify-between gap-4">
+        {/* 3. LISTA DE LA COMPRA Y ALMACÉN */}
+        <section className="grid gap-4 md:grid-cols-[1.4fr_1fr]">
+          <Link
+            href="/compra"
+            className="group flex items-center justify-between gap-4 rounded-[1.75rem] bg-[#52685A] p-6 text-white transition hover:bg-[#455A4C] sm:p-7"
+          >
             <div>
-              <p className="text-sm text-[#718077]">
-                Tu semana
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/65">
+                Para tu próxima compra
               </p>
 
-              <h2 className="mt-1 text-xl font-semibold">
-                {totalPlannedMeals}{" "}
-                {totalPlannedMeals === 1
-                  ? "comida planificada"
-                  : "comidas planificadas"}
+              <h2 className="mt-2 text-2xl font-semibold">
+                Lista de la compra
               </h2>
+
+              <p className="mt-2 max-w-sm text-sm leading-5 text-white/75">
+                Ten a mano lo que te falta y compra solo lo necesario.
+              </p>
+
+              <span className="mt-5 inline-flex rounded-full bg-white/15 px-4 py-2 text-sm font-semibold">
+                Abrir lista <span className="ml-2">→</span>
+              </span>
             </div>
 
-            <div className="text-4xl">
-              📅
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-3xl sm:h-20 sm:w-20">
+              🛒
             </div>
+          </Link>
+
+          <Link
+            href="/almacen"
+            className="flex items-center justify-between gap-4 rounded-[1.75rem] border border-[#E8E5DC] bg-white p-6 transition hover:border-[#CAD8CB] sm:p-7"
+          >
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#899487]">
+                Lo que ya tienes
+              </p>
+
+              <h3 className="mt-2 text-xl font-semibold">Mi almacén</h3>
+
+              <p className="mt-2 text-sm text-[#7B8278]">
+                Consulta y organiza tus ingredientes.
+              </p>
+
+              <p className="mt-4 text-sm font-semibold text-[#52685A]">
+                {loading
+                  ? "Cargando…"
+                  : `${pantryCount} ${
+                      pantryCount === 1 ? "ingrediente" : "ingredientes"
+                    } guardados`}{" "}
+                <span className="ml-1">→</span>
+              </p>
+            </div>
+
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#F0F2EC] text-2xl">
+              🥬
+            </div>
+          </Link>
+
+          {!loading && (
+            <p className="-mt-1 px-1 text-xs text-[#8A9086] md:col-span-2">
+              {shoppingCount === 0
+                ? "Tu lista está al día: no tienes productos pendientes."
+                : `Tienes ${shoppingCount} ${
+                    shoppingCount === 1
+                      ? "producto pendiente"
+                      : "productos pendientes"
+                  } en tu lista.`}
+            </p>
+          )}
+        </section>
+
+        {/* 4. IDEAS PARA COCINAR */}
+        <section>
+          <div className="mb-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#849083]">
+              Inspiración a tu manera
+            </p>
+
+            <h2 className="mt-1 text-2xl font-semibold">
+              Ideas para cocinar
+            </h2>
+
+            <p className="mt-1 text-sm text-[#7B8278]">
+              Recetas que aprovechan lo que tienes o los ingredientes que te
+              apetece utilizar.
+            </p>
           </div>
 
-          {plannedDays.length > 0 ? (
-            <div className="mt-5 flex gap-2 overflow-x-auto pb-1">
-              {days.map((day) => {
-                const hasMeal =
-                  getRecipeIds(
-                    planner[day]?.Comida
-                  ).length > 0 ||
-                  getRecipeIds(
-                    planner[day]?.Cena
-                  ).length > 0;
+          <div className="mb-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setIdeaMode("almacen")}
+              aria-pressed={ideaMode === "almacen"}
+              className={`rounded-full px-4 py-2.5 text-sm font-semibold transition ${
+                ideaMode === "almacen"
+                  ? "bg-[#52685A] text-white"
+                  : "border border-[#E2E3DA] bg-white text-[#52685A] hover:bg-[#F0F2EC]"
+              }`}
+            >
+              🥬 Con mi almacén
+            </button>
 
-                const lunchIds = getRecipeIds(
-                  planner[day]?.Comida
-                );
+            <button
+              type="button"
+              onClick={() => setIdeaMode("ingredientes")}
+              aria-pressed={ideaMode === "ingredientes"}
+              className={`rounded-full px-4 py-2.5 text-sm font-semibold transition ${
+                ideaMode === "ingredientes"
+                  ? "bg-[#52685A] text-white"
+                  : "border border-[#E2E3DA] bg-white text-[#52685A] hover:bg-[#F0F2EC]"
+              }`}
+            >
+              ✍️ Elegir ingredientes
+            </button>
+          </div>
 
-                const dinnerIds = getRecipeIds(
-                  planner[day]?.Cena
-                );
+          {ideaMode === "almacen" ? (
+            <div className="mb-4 rounded-2xl border border-[#E8E5DC] bg-white px-4 py-3 text-sm text-[#687367]">
+              {loading
+                ? "Buscando recetas…"
+                : pantryNames.length
+                  ? `Buscaremos recetas que aprovechen tus ${pantryNames.length} ingredientes registrados y mostraremos primero las que puedas preparar con todo lo necesario.`
+                  : "Tu almacén todavía está vacío. Puedes añadir ingredientes o buscar recetas escribiendo lo que tienes en mente."}
+            </div>
+          ) : (
+            <div className="mb-4 rounded-2xl border border-[#E8E5DC] bg-white p-4">
+              <label
+                htmlFor="home-ingredients"
+                className="mb-2 block text-sm font-semibold text-[#52685A]"
+              >
+                ¿Qué ingredientes quieres utilizar?
+              </label>
+
+              <textarea
+                id="home-ingredients"
+                value={ingredientInput}
+                onChange={(event) => setIngredientInput(event.target.value)}
+                placeholder="Por ejemplo: pollo, arroz, champiñones"
+                rows={2}
+                className="w-full resize-y rounded-xl border border-[#E2E3DA] bg-[#FBFAF6] px-3 py-3 text-sm text-[#26352D] outline-none transition placeholder:text-[#9A9D94] focus:border-[#829783] focus:ring-2 focus:ring-[#DDE8DF]"
+              />
+
+              <p className="mt-2 text-xs text-[#8A9086]">
+                Separa los ingredientes con comas. Te mostraremos recetas que
+                incluyan alguno de ellos.
+              </p>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {[1, 2, 3].map((item) => (
+                <div
+                  key={item}
+                  className="h-44 animate-pulse rounded-3xl bg-white"
+                />
+              ))}
+            </div>
+          ) : visibleSuggestions.length ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {visibleSuggestions.map((item) => {
+                const { recipe, missing, availableCount } = item;
+
+                const matchedCount =
+                  "matchedCount" in item
+                    ? Number(item.matchedCount)
+                    : 0;
 
                 return (
-                  <div
-                    key={day}
-                    className={`min-w-[76px] rounded-2xl p-3 text-center ${
-                      hasMeal
-                        ? "bg-white"
-                        : "bg-[#F1EDE4]"
-                    }`}
+                  <Link
+                    key={recipe.id}
+                    href={recipeHref(recipe)}
+                    className="rounded-3xl border border-[#E8E5DC] bg-white p-5 transition hover:-translate-y-0.5 hover:border-[#CAD8CB] hover:shadow-sm"
                   >
-                    <p className="text-xs text-[#89928C]">
-                      {day.slice(0, 3)}
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F0F2EC] text-2xl">
+                        {recipe.emoji || "🍽️"}
+                      </span>
+
+                      {ideaMode === "almacen" ? (
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            missing.length === 0
+                              ? "bg-[#E3EEE3] text-[#49634E]"
+                              : "bg-[#F4EDE2] text-[#8A6C46]"
+                          }`}
+                        >
+                          {missing.length === 0
+                            ? "¡Tienes todo!"
+                            : `Faltan ${missing.length}`}
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-[#E3EEE3] px-3 py-1 text-xs font-semibold text-[#49634E]">
+                          {matchedCount}{" "}
+                          {matchedCount === 1 ? "coincidencia" : "coincidencias"}
+                        </span>
+                      )}
+                    </div>
+
+                    <h3 className="mt-4 text-lg font-semibold">
+                      {recipe.name}
+                    </h3>
+
+                    <p className="mt-1 text-sm text-[#81877D]">
+                      {recipe.category}
+                      {recipe.time ? ` · ${recipe.time}` : ""}
                     </p>
 
-                    <div className="mt-2 text-lg">
-                      {lunchIds.length > 0
-                        ? getRecipe(
-                            lunchIds[0]
-                          )?.emoji
-                        : "·"}
-                    </div>
+                    <p className="mt-3 text-sm leading-5 text-[#687367]">
+                      {ideaMode === "ingredientes"
+                        ? `Esta receta incluye ${matchedCount} ${
+                            matchedCount === 1
+                              ? "ingrediente que has indicado"
+                              : "ingredientes que has indicado"
+                          }.`
+                        : missing.length === 0
+                          ? "Puedes prepararla con los ingredientes que tienes."
+                          : `Ya tienes ${availableCount} ${
+                              availableCount === 1
+                                ? "ingrediente"
+                                : "ingredientes"
+                            }. Te falta${missing.length === 1 ? "" : "n"} ${missing
+                              .slice(0, 2)
+                              .join(" y ")}${missing.length > 2 ? "…" : ""}.`}
+                    </p>
 
-                    <div className="text-lg">
-                      {dinnerIds.length > 0
-                        ? getRecipe(
-                            dinnerIds[0]
-                          )?.emoji
-                        : "·"}
-                    </div>
-                  </div>
+                    <p className="mt-4 text-sm font-semibold text-[#52685A]">
+                      Ver receta →
+                    </p>
+                  </Link>
                 );
               })}
             </div>
           ) : (
-            <p className="mt-4 text-sm text-[#718077]">
-              Aún no has planificado ninguna comida.
-            </p>
-          )}
+            <div className="rounded-3xl border border-dashed border-[#D9DED4] bg-white/70 px-5 py-8 text-center">
+              <span className="text-3xl">🥣</span>
 
-          <Link
-            href="/planificador"
-            className="mt-5 inline-block rounded-2xl bg-[#52685A] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#43574A]"
-          >
-            Organizar mi semana
-          </Link>
-        </section>
+              <h3 className="mt-3 font-semibold">
+                {ideaMode === "ingredientes" && !ingredientInput.trim()
+                  ? "¿Qué te apetece cocinar?"
+                  : "Vamos a encontrar algo rico"}
+              </h3>
 
-        {/* ¿QUÉ PUEDO COCINAR? */}
-        <section className="mt-8 rounded-3xl bg-[#DDE8DF] p-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-[#718077]">
-                Con lo que tienes en casa
-              </p>
-
-              <h2 className="mt-1 text-2xl font-semibold">
-                ¿Qué puedo cocinar? ✨
-              </h2>
-
-              <p className="mt-2 text-sm text-[#718077]">
-                Hemos buscado recetas que puedes preparar
-                con lo que tienes en tu despensa.
-              </p>
-            </div>
-
-            <div className="text-4xl">
-              👩‍🍳
-            </div>
-          </div>
-
-          {cookingSuggestions.length > 0 ? (
-            <div className="mt-5 space-y-3">
-              {cookingSuggestions.map(
-                (suggestion) => (
-                  <Link
-                    key={suggestion.recipe.id}
-                    href={`/recetas/${suggestion.recipe.id}`}
-                    className="flex items-center justify-between gap-4 rounded-2xl bg-white p-4 transition hover:-translate-y-0.5 hover:shadow-sm"
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#F7F5EF] text-2xl">
-                        {suggestion.recipe.emoji ||
-                          "🍽️"}
-                      </div>
-
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold">
-                          {suggestion.recipe.name}
-                        </p>
-
-                        {suggestion.missing.length ===
-                        0 ? (
-                          <p className="mt-0.5 text-xs font-medium text-[#6F7D5C]">
-                            Tienes todo lo necesario ✓
-                          </p>
-                        ) : (
-                          <p className="mt-0.5 truncate text-xs text-[#8B8175]">
-                            Te falta{" "}
-                            {suggestion.missing.length ===
-                            1
-                              ? suggestion.missing[0]
-                              : `${suggestion.missing.length} ingredientes`}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <span className="shrink-0 text-lg text-[#52685A]">
-                      →
-                    </span>
-                  </Link>
-                )
-              )}
-            </div>
-          ) : (
-            <div className="mt-5 rounded-2xl bg-white p-4">
-              <p className="font-semibold">
-                Aún no podemos recomendarte nada
-              </p>
-
-              <p className="mt-1 text-sm text-[#89928C]">
-                Añade alimentos a tu despensa y
-                buscaremos recetas para ti.
+              <p className="mx-auto mt-1 max-w-md text-sm leading-5 text-[#7B8278]">
+                {ideaMode === "ingredientes" && !ingredientInput.trim()
+                  ? "Escribe ingredientes separados por comas para buscar recetas que los utilicen."
+                  : ideaMode === "ingredientes"
+                    ? "No hemos encontrado coincidencias entre esos ingredientes y las recetas disponibles. Prueba con otros ingredientes."
+                    : "Cuando haya recetas con ingredientes identificados, podremos priorizar las que puedas preparar con lo que tienes."}
               </p>
 
               <Link
-                href="/compra"
-                className="mt-4 inline-block rounded-xl bg-[#52685A] px-4 py-2 text-xs font-semibold text-white"
+                href="/recetas"
+                className="mt-4 inline-flex rounded-full bg-[#52685A] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#405447]"
               >
-                Ir a mi despensa
+                Explorar recetas
               </Link>
             </div>
           )}
-
-          <Link
-            href="/recetas"
-            className="mt-5 inline-block text-sm font-semibold text-[#52685A] underline"
-          >
-            Ver todas mis recetas →
-          </Link>
         </section>
 
-        {/* ACCESOS RÁPIDOS */}
-        <section className="mt-8">
-          <h2 className="text-xl font-semibold">
-            ¿Qué quieres hacer?
-          </h2>
+        {/* 5. ÚLTIMAS RECETAS AÑADIDAS */}
+        <section>
+          <div className="mb-4 flex items-end justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#849083]">
+                Tu colección personal
+              </p>
 
-          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+              <h2 className="mt-1 text-2xl font-semibold">
+                Últimas recetas añadidas
+              </h2>
+            </div>
 
             <Link
               href="/recetas"
-              className="rounded-3xl bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+              className="shrink-0 text-sm font-semibold text-[#52685A] hover:underline"
             >
-              <div className="text-3xl">
-                🍳
-              </div>
-
-              <h3 className="mt-4 font-semibold">
-                Buscar recetas
-              </h3>
-
-              <p className="mt-1 text-sm text-[#89928C]">
-                Descubre ideas para tus comidas.
-              </p>
+              Ver recetario →
             </Link>
-
-            <Link
-              href="/planificador"
-              className="rounded-3xl bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
-            >
-              <div className="text-3xl">
-                📅
-              </div>
-
-              <h3 className="mt-4 font-semibold">
-                Planificar
-              </h3>
-
-              <p className="mt-1 text-sm text-[#89928C]">
-                Organiza tu semana.
-              </p>
-            </Link>
-
-            <Link
-              href="/compra"
-              className="rounded-3xl bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
-            >
-              <div className="text-3xl">
-                🛒
-              </div>
-
-              <h3 className="mt-4 font-semibold">
-                Lista de compra
-              </h3>
-
-              <p className="mt-1 text-sm text-[#89928C]">
-                Consulta lo que necesitas comprar.
-              </p>
-            </Link>
-
           </div>
-        </section>
 
+          {loading ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {[1, 2, 3, 4].map((item) => (
+                <div
+                  key={item}
+                  className="h-36 animate-pulse rounded-3xl bg-white"
+                />
+              ))}
+            </div>
+          ) : latestRecipes.length ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {latestRecipes.map((recipe) => (
+                <Link
+                  key={recipe.id}
+                  href={recipeHref(recipe)}
+                  className="group rounded-3xl border border-[#E8E5DC] bg-white p-5 transition hover:-translate-y-0.5 hover:border-[#CAD8CB] hover:shadow-sm"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F0F2EC] text-2xl">
+                    {recipe.emoji || "🍽️"}
+                  </div>
+
+                  <h3 className="mt-4 font-semibold group-hover:text-[#52685A]">
+                    {recipe.name}
+                  </h3>
+
+                  <p className="mt-1 text-sm text-[#81877D]">
+                    {recipe.category}
+                    {recipe.time ? ` · ${recipe.time}` : ""}
+                  </p>
+
+                  <p className="mt-3 text-sm font-semibold text-[#52685A]">
+                    Ver receta →
+                  </p>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-3xl border border-dashed border-[#D9DED4] bg-white/70 px-5 py-7 text-center">
+              <p className="text-sm text-[#7B8278]">
+                Todavía no has añadido recetas propias.
+              </p>
+
+              <Link
+                href="/recetas"
+                className="mt-3 inline-flex text-sm font-semibold text-[#52685A] hover:underline"
+              >
+                Añadir tu primera receta →
+              </Link>
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );
