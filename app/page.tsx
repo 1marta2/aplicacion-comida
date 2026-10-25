@@ -226,11 +226,18 @@ export default function HomePage() {
   }, [monday]);
 
   const todayKey = dateKey(today);
+  const tomorrowDate = new Date(today);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrowKey = dateKey(tomorrowDate);
 
   const todayName =
     DAYS[today.getDay() === 0 ? 6 : today.getDay() - 1];
 
   const tomorrowName = DAYS[(DAYS.indexOf(todayName) + 1) % 7];
+  const displayedDays = [
+    { date: todayKey, day: todayName, label: "Hoy" },
+    { date: tomorrowKey, day: tomorrowName, label: "Mañana" },
+  ];
 
   const dateLabel = today.toLocaleDateString("es-ES", {
     weekday: "long",
@@ -277,7 +284,7 @@ export default function HomePage() {
             .select("date,meal_type,recipe_id,is_outside")
             .eq("user_id", user.id)
             .gte("date", dateKey(monday))
-            .lte("date", dateKey(sunday)),
+            .lte("date", dateKey(tomorrowDate > sunday ? tomorrowDate : sunday)),
 
           supabase
             .from("pantry")
@@ -326,7 +333,9 @@ export default function HomePage() {
         const planningRows = (planResult.data ?? []) as PlanRow[];
         const week: WeekMeal[] = [];
 
-        for (let index = 0; index < 7; index++) {
+        const daysToBuild = today.getDay() === 0 ? 8 : 7;
+
+        for (let index = 0; index < daysToBuild; index++) {
           const date = new Date(monday);
           date.setDate(monday.getDate() + index);
 
@@ -346,7 +355,7 @@ export default function HomePage() {
 
             week.push({
               date: key,
-              day: DAYS[index],
+              day: DAYS[date.getDay() === 0 ? 6 : date.getDay() - 1],
               meal,
               recipe,
               outside: Boolean(row?.is_outside),
@@ -587,7 +596,7 @@ export default function HomePage() {
   }, [allSuggestions, ideaMode, ingredientInput]);
 
   const plannedMealsCount = weekMeals.filter(
-    (item) => item.recipe || item.outside,
+    (item) => item.date <= dateKey(sunday) && (item.recipe || item.outside),
   ).length;
 
   function displayMeal(item: WeekMeal) {
@@ -615,14 +624,14 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-[#F7F5EF] px-4 pb-28 pt-6 text-[#26352D] sm:px-6 lg:px-10">
-      <div className="mx-auto max-w-6xl space-y-8">
+      <div className="mx-auto max-w-6xl space-y-5 sm:space-y-6">
         {/* 1. BIENVENIDA */}
-        <header className="relative overflow-hidden rounded-[2rem] bg-[#E8EEE8] px-6 py-7 sm:px-9 sm:py-9">
-          <div className="pointer-events-none absolute -right-8 -top-12 h-48 w-48 rounded-full bg-white/35" />
+        <header className="relative overflow-hidden rounded-[1.5rem] bg-[#E8EEE8] px-4 py-4 sm:px-6 sm:py-5">
+          <div className="pointer-events-none absolute -right-8 -top-12 h-36 w-36 rounded-full bg-white/35" />
 
-          <div className="relative flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
+          <div className="relative flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
             <div>
-              <p className="mb-2 text-sm font-semibold capitalize tracking-wide text-[#647568]">
+              <p className="mb-1 text-xs font-semibold capitalize tracking-wide text-[#647568]">
                 {dateLabel}
               </p>
 
@@ -630,11 +639,11 @@ export default function HomePage() {
                 Tu cocina, a tu manera
               </p>
 
-              <h1 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">
                 Hola, ¡vamos a cocinar! <span aria-hidden="true">🍲</span>
               </h1>
 
-              <p className="mt-3 max-w-xl text-sm leading-6 text-[#657166] sm:text-base">
+              <p className="mt-1.5 max-w-xl text-xs leading-5 text-[#657166] sm:text-sm">
                 Organiza tus comidas, aprovecha lo que tienes en casa y
                 encuentra inspiración para hoy.
               </p>
@@ -642,7 +651,7 @@ export default function HomePage() {
 
             <Link
               href="/recetas"
-              className="inline-flex w-fit items-center gap-2 rounded-full bg-[#52685A] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#405447]"
+              className="inline-flex w-fit items-center gap-2 rounded-full bg-[#52685A] px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#405447]"
             >
               Explorar recetas <span aria-hidden="true">→</span>
             </Link>
@@ -660,12 +669,12 @@ export default function HomePage() {
 
         {/* 2. TU SEMANA */}
         <section>
-          <div className="mb-4 flex items-end justify-between gap-3">
+          <div className="mb-3 flex items-end justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#849083]">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#849083]">
                 Organízate sin agobios
               </p>
-              <h2 className="mt-1 text-2xl font-semibold">Tu semana</h2>
+              <h2 className="mt-1 text-xl font-semibold">Tu semana</h2>
             </div>
 
             <Link
@@ -676,54 +685,69 @@ export default function HomePage() {
             </Link>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
             {loading
-              ? Array.from({ length: 4 }).map((_, index) => (
+              ? [0, 1].map((index) => (
                   <div
                     key={index}
-                    className="h-36 animate-pulse rounded-3xl bg-white"
+                    className="h-28 animate-pulse rounded-2xl bg-white"
                   />
                 ))
-              : weekMeals
-                  .filter(
-                    (item) =>
-                      item.day === todayName ||
-                      item.day === tomorrowName,
-                  )
-                  .map((item) => (
+              : displayedDays.map((dayInfo) => {
+                  const mealsForDay = MEALS.map((meal) =>
+                    weekMeals.find(
+                      (item) => item.date === dayInfo.date && item.meal === meal,
+                    ) ?? {
+                      date: dayInfo.date,
+                      day: dayInfo.day,
+                      meal,
+                      recipe: null,
+                      outside: false,
+                    },
+                  );
+
+                  return (
                     <div
-                      key={`${item.date}-${item.meal}`}
-                      className={`rounded-3xl border p-4 ${
-                        item.date === todayKey
+                      key={dayInfo.date}
+                      className={`rounded-2xl border p-3 ${
+                        dayInfo.date === todayKey
                           ? "border-[#CAD8CB] bg-white shadow-sm"
                           : "border-[#E8E5DC] bg-[#FBFAF6]"
                       }`}
                     >
-                      <div className="mb-3 flex items-center justify-between">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-[#829083]">
-                          {item.date === todayKey ? "Hoy" : item.day}
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-[#52685A]">
+                          {dayInfo.label} · {dayInfo.day}
                         </span>
-
-                        <span className="rounded-full bg-[#F0F2EC] px-2.5 py-1 text-xs text-[#667567]">
-                          {item.meal}
+                        <span className="text-[11px] text-[#92988E]">
+                          {new Date(`${dayInfo.date}T12:00:00`).toLocaleDateString("es-ES", {
+                            day: "numeric",
+                            month: "short",
+                          })}
                         </span>
                       </div>
 
-                      <div className="min-h-10 text-sm leading-5">
-                        {displayMeal(item)}
+                      <div className="grid grid-cols-2 gap-2">
+                        {mealsForDay.map((item) => (
+                          <div
+                            key={`${item.date}-${item.meal}`}
+                            className="min-w-0 rounded-xl bg-[#F7F7F2] px-2.5 py-2"
+                          >
+                            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[#899487]">
+                              {item.meal}
+                            </p>
+                            <div className="break-words text-xs leading-4 sm:text-sm sm:leading-5">
+                              {displayMeal(item)}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-
-                      {item.date === todayKey && (
-                        <p className="mt-3 text-[11px] text-[#9A9D94]">
-                          Tu plan de hoy
-                        </p>
-                      )}
                     </div>
-                  ))}
+                  );
+                })}
           </div>
-
           {!loading && (
-            <div className="mt-3 flex items-center justify-between rounded-2xl bg-[#F0EEE6] px-4 py-3 text-sm">
+            <div className="mt-2 flex items-center justify-between rounded-xl bg-[#F0EEE6] px-3 py-2 text-xs">
               <span className="text-[#697368]">
                 Comidas y cenas organizadas esta semana
               </span>
@@ -735,50 +759,50 @@ export default function HomePage() {
         </section>
 
         {/* 3. LISTA DE LA COMPRA Y ALMACÉN */}
-        <section className="grid gap-4 md:grid-cols-[1.4fr_1fr]">
+        <section className="grid grid-cols-2 gap-2 sm:gap-3">
           <Link
             href="/compra"
-            className="group flex items-center justify-between gap-4 rounded-[1.75rem] bg-[#52685A] p-6 text-white transition hover:bg-[#455A4C] sm:p-7"
+            className="group flex min-w-0 items-start justify-between gap-2 rounded-2xl bg-[#52685A] p-3 text-white transition hover:bg-[#455A4C] sm:items-center sm:gap-3 sm:p-4"
           >
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/65">
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-white/65 sm:text-[10px]">
                 Para tu próxima compra
               </p>
 
-              <h2 className="mt-2 text-2xl font-semibold">
+              <h2 className="mt-1.5 text-sm font-semibold leading-5 sm:text-lg">
                 Lista de la compra
               </h2>
 
-              <p className="mt-2 max-w-sm text-sm leading-5 text-white/75">
+              <p className="mt-1 hidden text-xs leading-4 text-white/75 sm:block">
                 Ten a mano lo que te falta y compra solo lo necesario.
               </p>
 
-              <span className="mt-5 inline-flex rounded-full bg-white/15 px-4 py-2 text-sm font-semibold">
+              <span className="mt-3 inline-flex rounded-full bg-white/15 px-2.5 py-1.5 text-[11px] font-semibold sm:text-xs">
                 Abrir lista <span className="ml-2">→</span>
               </span>
             </div>
 
-            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-3xl sm:h-20 sm:w-20">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/15 text-lg sm:h-11 sm:w-11 sm:text-xl">
               🛒
             </div>
           </Link>
 
           <Link
             href="/almacen"
-            className="flex items-center justify-between gap-4 rounded-[1.75rem] border border-[#E8E5DC] bg-white p-6 transition hover:border-[#CAD8CB] sm:p-7"
+            className="flex min-w-0 items-start justify-between gap-2 rounded-2xl border border-[#E8E5DC] bg-white p-3 transition hover:border-[#CAD8CB] sm:items-center sm:gap-3 sm:p-4"
           >
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#899487]">
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-[#899487] sm:text-[10px]">
                 Lo que ya tienes
               </p>
 
-              <h3 className="mt-2 text-xl font-semibold">Mi almacén</h3>
+              <h3 className="mt-1.5 text-sm font-semibold sm:text-lg">Mi almacén</h3>
 
-              <p className="mt-2 text-sm text-[#7B8278]">
+              <p className="mt-1 hidden text-xs text-[#7B8278] sm:block">
                 Consulta y organiza tus ingredientes.
               </p>
 
-              <p className="mt-4 text-sm font-semibold text-[#52685A]">
+              <p className="mt-2 text-[10px] font-semibold text-[#52685A] sm:text-xs">
                 {loading
                   ? "Cargando…"
                   : `${pantryCount} ${
@@ -788,13 +812,13 @@ export default function HomePage() {
               </p>
             </div>
 
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#F0F2EC] text-2xl">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#F0F2EC] text-lg sm:h-10 sm:w-10">
               🥬
             </div>
           </Link>
 
           {!loading && (
-            <p className="-mt-1 px-1 text-xs text-[#8A9086] md:col-span-2">
+            <p className="col-span-2 px-1 text-[10px] text-[#8A9086] sm:text-xs">
               {shoppingCount === 0
                 ? "Tu lista está al día: no tienes productos pendientes."
                 : `Tienes ${shoppingCount} ${
@@ -808,22 +832,22 @@ export default function HomePage() {
 
         {/* 4. IDEAS PARA COCINAR */}
         <section>
-          <div className="mb-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#849083]">
+          <div className="mb-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#849083]">
               Inspiración a tu manera
             </p>
 
-            <h2 className="mt-1 text-2xl font-semibold">
+            <h2 className="mt-1 text-xl font-semibold">
               Ideas para cocinar
             </h2>
 
-            <p className="mt-1 text-sm text-[#7B8278]">
+            <p className="mt-1 text-xs text-[#7B8278]">
               Recetas que aprovechan lo que tienes o los ingredientes que te
               apetece utilizar.
             </p>
           </div>
 
-          <div className="mb-4 flex flex-wrap gap-2">
+          <div className="mb-3 flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => setIdeaMode("almacen")}
@@ -852,7 +876,7 @@ export default function HomePage() {
           </div>
 
           {ideaMode === "almacen" ? (
-            <div className="mb-4 rounded-2xl border border-[#E8E5DC] bg-white px-4 py-3 text-sm text-[#687367]">
+            <div className="mb-3 rounded-xl border border-[#E8E5DC] bg-white px-3 py-2.5 text-xs text-[#687367]">
               {loading
                 ? "Buscando recetas…"
                 : pantryNames.length
@@ -860,7 +884,7 @@ export default function HomePage() {
                   : "Tu almacén todavía está vacío. Puedes añadir ingredientes o buscar recetas escribiendo lo que tienes en mente."}
             </div>
           ) : (
-            <div className="mb-4 rounded-2xl border border-[#E8E5DC] bg-white p-4">
+            <div className="mb-3 rounded-xl border border-[#E8E5DC] bg-white p-3">
               <label
                 htmlFor="home-ingredients"
                 className="mb-2 block text-sm font-semibold text-[#52685A]"
@@ -874,7 +898,7 @@ export default function HomePage() {
                 onChange={(event) => setIngredientInput(event.target.value)}
                 placeholder="Por ejemplo: pollo, arroz, champiñones"
                 rows={2}
-                className="w-full resize-y rounded-xl border border-[#E2E3DA] bg-[#FBFAF6] px-3 py-3 text-sm text-[#26352D] outline-none transition placeholder:text-[#9A9D94] focus:border-[#829783] focus:ring-2 focus:ring-[#DDE8DF]"
+                className="w-full resize-y rounded-xl border border-[#E2E3DA] bg-[#FBFAF6] px-3 py-2 text-sm text-[#26352D] outline-none transition placeholder:text-[#9A9D94] focus:border-[#829783] focus:ring-2 focus:ring-[#DDE8DF]"
               />
 
               <p className="mt-2 text-xs text-[#8A9086]">
@@ -907,10 +931,10 @@ export default function HomePage() {
                   <Link
                     key={recipe.id}
                     href={recipeHref(recipe)}
-                    className="rounded-3xl border border-[#E8E5DC] bg-white p-5 transition hover:-translate-y-0.5 hover:border-[#CAD8CB] hover:shadow-sm"
+                    className="rounded-2xl border border-[#E8E5DC] bg-white p-3.5 transition hover:-translate-y-0.5 hover:border-[#CAD8CB] hover:shadow-sm"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F0F2EC] text-2xl">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F0F2EC] text-xl">
                         {recipe.emoji || "🍽️"}
                       </span>
 
@@ -934,7 +958,7 @@ export default function HomePage() {
                       )}
                     </div>
 
-                    <h3 className="mt-4 text-lg font-semibold">
+                    <h3 className="mt-2.5 text-base font-semibold">
                       {recipe.name}
                     </h3>
 
@@ -943,7 +967,7 @@ export default function HomePage() {
                       {recipe.time ? ` · ${recipe.time}` : ""}
                     </p>
 
-                    <p className="mt-3 text-sm leading-5 text-[#687367]">
+                    <p className="mt-2 text-xs leading-4 text-[#687367]">
                       {ideaMode === "ingredientes"
                         ? `Esta receta incluye ${matchedCount} ${
                             matchedCount === 1
@@ -961,7 +985,7 @@ export default function HomePage() {
                               .join(" y ")}${missing.length > 2 ? "…" : ""}.`}
                     </p>
 
-                    <p className="mt-4 text-sm font-semibold text-[#52685A]">
+                    <p className="mt-3 text-xs font-semibold text-[#52685A]">
                       Ver receta →
                     </p>
                   </Link>
@@ -998,9 +1022,9 @@ export default function HomePage() {
 
         {/* 5. ÚLTIMAS RECETAS AÑADIDAS */}
         <section>
-          <div className="mb-4 flex items-end justify-between gap-3">
+          <div className="mb-3 flex items-end justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#849083]">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#849083]">
                 Tu colección personal
               </p>
 
@@ -1032,13 +1056,13 @@ export default function HomePage() {
                 <Link
                   key={recipe.id}
                   href={recipeHref(recipe)}
-                  className="group rounded-3xl border border-[#E8E5DC] bg-white p-5 transition hover:-translate-y-0.5 hover:border-[#CAD8CB] hover:shadow-sm"
+                  className="group rounded-2xl border border-[#E8E5DC] bg-white p-3.5 transition hover:-translate-y-0.5 hover:border-[#CAD8CB] hover:shadow-sm"
                 >
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F0F2EC] text-2xl">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F0F2EC] text-xl">
                     {recipe.emoji || "🍽️"}
                   </div>
 
-                  <h3 className="mt-4 font-semibold group-hover:text-[#52685A]">
+                  <h3 className="mt-2.5 text-sm font-semibold group-hover:text-[#52685A]">
                     {recipe.name}
                   </h3>
 
@@ -1047,7 +1071,7 @@ export default function HomePage() {
                     {recipe.time ? ` · ${recipe.time}` : ""}
                   </p>
 
-                  <p className="mt-3 text-sm font-semibold text-[#52685A]">
+                  <p className="mt-2.5 text-xs font-semibold text-[#52685A]">
                     Ver receta →
                   </p>
                 </Link>
