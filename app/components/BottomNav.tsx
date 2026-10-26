@@ -16,7 +16,7 @@ export default function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-[#D9DDD8] bg-[#F7F5EF]/95 backdrop-blur-md">
+    <nav className="fixed inset-x-0 bottom-0 z-50 bg-[#F7F5EF]/95 backdrop-blur-md">
       <div className="mx-auto flex max-w-4xl items-center justify-around px-1 py-2 sm:px-3">
         {navigationItems.map((item) => {
           const isActive =
@@ -29,13 +29,25 @@ export default function BottomNav() {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-2xl px-1 py-2 transition sm:px-3 ${
+              onClick={(event) => {
+                if (isActive) {
+                  event.preventDefault();
+                  window.scrollTo({
+                    top: 0,
+                    behavior: "smooth",
+                  });
+                }
+              }}
+              aria-current={isActive ? "page" : undefined}
+              className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-2xl px-1 py-2 transition-colors sm:px-3 ${
                 isActive
                   ? "bg-[#52685A] text-white"
                   : "text-[#68736B] hover:bg-[#E8EBE5]"
               }`}
             >
-              <span className="text-lg leading-none">{item.icon}</span>
+              <span className="text-lg leading-none">
+                {item.icon}
+              </span>
 
               <span className="text-center text-[10px] font-medium sm:text-xs">
                 {item.label}
