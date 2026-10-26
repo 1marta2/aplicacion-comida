@@ -38,7 +38,7 @@ type PantryRow = {
 };
 
 const inputClass =
-  "w-full rounded-xl border border-[#E1DED5] bg-[#FBFAF7] px-3 py-2 text-sm text-[#30352C] outline-none placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]";
+  "w-full rounded-xl border border-[#E1DED5] bg-[#FBFAF7] px-3 py-2 text-base text-[#30352C] outline-none placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8] sm:text-sm";
 
 function normalizeUnit(unit: string | null): string | null {
   if (!unit?.trim()) return null;
@@ -128,6 +128,7 @@ export default function AlmacenPage() {
   const [expiryDate, setExpiryDate] = useState("");
   const [useSoon, setUseSoon] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -412,22 +413,27 @@ export default function AlmacenPage() {
     );
   }
 
-  // Guarda cambios rápidos desde la propia tarjeta del ingrediente.
   async function updateConservation(
     item: PantryItem,
-    changes: Partial<Pick<PantryItem, "isOpened" | "openedAt" | "expiryDate" | "useSoon">>
+    changes: Partial<
+      Pick<PantryItem, "isOpened" | "openedAt" | "expiryDate" | "useSoon">
+    >
   ) {
     if (updatingItemId === item.id) return;
 
     const next = { ...item, ...changes };
 
     if (next.openedAt && !next.isOpened) {
-      setErrorMessage("Marca el producto como abierto para guardar su fecha de apertura.");
+      setErrorMessage(
+        "Marca el producto como abierto para guardar su fecha de apertura."
+      );
       return;
     }
 
     if (next.openedAt && next.expiryDate && next.openedAt > next.expiryDate) {
-      setErrorMessage("La fecha de apertura no puede ser posterior a la caducidad.");
+      setErrorMessage(
+        "La fecha de apertura no puede ser posterior a la caducidad."
+      );
       return;
     }
 
@@ -464,7 +470,9 @@ export default function AlmacenPage() {
       );
     } catch (error) {
       console.error("Error actualizando conservación:", error);
-      setErrorMessage("No se ha podido actualizar el ingrediente. Inténtalo de nuevo.");
+      setErrorMessage(
+        "No se ha podido actualizar el ingrediente. Inténtalo de nuevo."
+      );
     } finally {
       setUpdatingItemId(null);
     }
@@ -479,6 +487,7 @@ export default function AlmacenPage() {
     setExpiryDate("");
     setUseSoon(false);
     setEditingId(null);
+    setShowForm(false);
   }
 
   async function findOrCreateIngredient(ingredientName: string) {
@@ -519,12 +528,16 @@ export default function AlmacenPage() {
     }
 
     if (openedAt && !isOpened) {
-      setErrorMessage("Marca el producto como abierto para guardar la fecha de apertura.");
+      setErrorMessage(
+        "Marca el producto como abierto para guardar la fecha de apertura."
+      );
       return;
     }
 
     if (openedAt && expiryDate && openedAt > expiryDate) {
-      setErrorMessage("La fecha de apertura no puede ser posterior a la fecha de caducidad.");
+      setErrorMessage(
+        "La fecha de apertura no puede ser posterior a la fecha de caducidad."
+      );
       return;
     }
 
@@ -562,6 +575,7 @@ export default function AlmacenPage() {
           })
           .eq("id", editingId)
           .eq("user_id", user.id);
+
         if (error) throw error;
       } else {
         const existing = items.find(
@@ -598,6 +612,7 @@ export default function AlmacenPage() {
             .update({ quantity: finalQuantity, unit: finalUnit })
             .eq("id", existing.id)
             .eq("user_id", user.id);
+
           if (error) throw error;
         } else {
           const { error } = await supabase.from("pantry").insert({
@@ -607,6 +622,7 @@ export default function AlmacenPage() {
             unit: normalizedUnit,
             ...conservation,
           });
+
           if (error) throw error;
         }
       }
@@ -615,7 +631,9 @@ export default function AlmacenPage() {
       await loadItems();
     } catch (error) {
       console.error("Error guardando ingrediente:", error);
-      setErrorMessage("No se ha podido guardar el ingrediente. Comprueba los datos e inténtalo de nuevo.");
+      setErrorMessage(
+        "No se ha podido guardar el ingrediente. Comprueba los datos e inténtalo de nuevo."
+      );
     } finally {
       setSaving(false);
     }
@@ -631,6 +649,7 @@ export default function AlmacenPage() {
     setExpiryDate(item.expiryDate);
     setUseSoon(item.useSoon);
     setErrorMessage("");
+    setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -702,6 +721,7 @@ export default function AlmacenPage() {
             .update({ checked: false })
             .eq("id", existing.id)
             .eq("user_id", user.id);
+
           if (error) throw error;
         }
       } else {
@@ -713,6 +733,7 @@ export default function AlmacenPage() {
           unit: normalizeUnit(item.unit),
           checked: false,
         });
+
         if (error) throw error;
       }
 
@@ -721,6 +742,7 @@ export default function AlmacenPage() {
         .delete()
         .eq("id", item.id)
         .eq("user_id", user.id);
+
       if (removeError) throw removeError;
 
       setItems((current) => current.filter((entry) => entry.id !== item.id));
@@ -731,7 +753,9 @@ export default function AlmacenPage() {
       );
     } catch (error) {
       console.error("Error pasando ingrediente a la compra:", error);
-      setShoppingMessage("No se ha podido añadir el ingrediente. Inténtalo de nuevo.");
+      setShoppingMessage(
+        "No se ha podido añadir el ingrediente. Inténtalo de nuevo."
+      );
     } finally {
       setShoppingActionId(null);
     }
@@ -763,7 +787,7 @@ export default function AlmacenPage() {
           <span aria-hidden="true">←</span> Volver a la compra
         </Link>
 
-        <header className="mb-5 mt-4">
+        <header className="mb-4 mt-4">
           <p className="text-xs font-medium tracking-wide text-[#788675]">
             TU COCINA, BAJO CONTROL
           </p>
@@ -780,7 +804,8 @@ export default function AlmacenPage() {
             </div>
             <div>
               <p className="text-sm font-semibold">
-                {items.length} {items.length === 1 ? "ingrediente" : "ingredientes"}
+                {items.length}{" "}
+                {items.length === 1 ? "ingrediente" : "ingredientes"}
               </p>
               <p className="text-xs text-[#52685A]">
                 Marca lo abierto y prioriza lo que quieras gastar.
@@ -789,143 +814,196 @@ export default function AlmacenPage() {
           </div>
         </header>
 
-        <section className="mb-5 rounded-2xl bg-white p-4 shadow-sm">
-          <div className="mb-3">
-            <h2 className="font-semibold">
-              {editingId !== null ? "Editar ingrediente" : "Añadir ingrediente"}
-            </h2>
-            <p className="mt-0.5 text-xs text-[#788675]">
-              Las cantidades, fechas y prioridades son opcionales.
-            </p>
-          </div>
+        <section className="mb-4">
+          <button
+            type="button"
+            onClick={() => {
+              if (showForm) {
+                resetForm();
+                setErrorMessage("");
+              } else {
+                setEditingId(null);
+                setErrorMessage("");
+                setShowForm(true);
+              }
+            }}
+            aria-expanded={showForm}
+            aria-controls="pantry-item-form"
+            className="flex w-full items-center justify-between rounded-2xl bg-white px-4 py-3 text-left shadow-sm transition hover:bg-[#FBFAF7]"
+          >
+            <span className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#DDE8DF] text-xl text-[#52685A]">
+                {showForm ? "−" : "+"}
+              </span>
+              <span>
+                <span className="block text-sm font-semibold">
+                  {editingId !== null
+                    ? "Editar ingrediente"
+                    : showForm
+                      ? "Añadir ingrediente"
+                      : "Añadir ingrediente"}
+                </span>
+                <span className="mt-0.5 block text-xs text-[#788675]">
+                  {showForm
+                    ? "Pulsa para cerrar el formulario"
+                    : "Añade lo que tienes en casa"}
+                </span>
+              </span>
+            </span>
+            <span className="text-sm text-[#788675]" aria-hidden="true">
+              {showForm ? "⌃" : "⌄"}
+            </span>
+          </button>
 
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            <label className="text-sm font-medium">
-              Ingrediente
-              <input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void saveItem();
-                  }
-                }}
-                placeholder="Ej. Arroz"
-                className={`${inputClass} mt-1`}
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-2">
-              <label className="text-sm font-medium">
-                Cantidad <span className="font-normal text-[#9A9E94]">(opcional)</span>
-                <input
-                  value={quantity}
-                  onChange={(event) => setQuantity(event.target.value)}
-                  inputMode="decimal"
-                  placeholder="Ej. 500"
-                  className={`${inputClass} mt-1`}
-                />
-              </label>
-              <label className="text-sm font-medium">
-                Unidad <span className="font-normal text-[#9A9E94]">(opcional)</span>
-                <input
-                  value={unit}
-                  onChange={(event) => setUnit(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void saveItem();
-                    }
-                  }}
-                  placeholder="g, kg, ml…"
-                  className={`${inputClass} mt-1`}
-                />
-              </label>
-            </div>
-          </div>
-
-          <details className="mt-3 rounded-xl bg-[#F7F5EF] px-3 py-2">
-            <summary className="cursor-pointer text-sm font-medium text-[#52685A]">
-              Conservación y fechas
-            </summary>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={isOpened}
-                  onChange={(event) => {
-                    setIsOpened(event.target.checked);
-                    if (!event.target.checked) setOpenedAt("");
-                  }}
-                  className="h-4 w-4 accent-[#52685A]"
-                />
-                Producto abierto
-              </label>
-
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={useSoon}
-                  onChange={(event) => setUseSoon(event.target.checked)}
-                  className="h-4 w-4 accent-[#52685A]"
-                />
-                Hay que gastarlo pronto
-              </label>
-
-              <label className="text-sm font-medium">
-                Fecha de apertura
-                <input
-                  type="date"
-                  value={openedAt}
-                  onChange={(event) => setOpenedAt(event.target.value)}
-                  disabled={!isOpened}
-                  className={`${inputClass} mt-1 disabled:opacity-50`}
-                />
-              </label>
-
-              <label className="text-sm font-medium">
-                Fecha de caducidad
-                <input
-                  type="date"
-                  value={expiryDate}
-                  onChange={(event) => setExpiryDate(event.target.value)}
-                  className={`${inputClass} mt-1`}
-                />
-              </label>
-            </div>
-          </details>
-
-          {errorMessage && (
-            <p role="alert" className="mt-3 rounded-xl bg-[#FBF0EC] px-3 py-2 text-sm text-[#955F53]">
-              {errorMessage}
-            </p>
-          )}
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => void saveItem()}
-              disabled={saving || !name.trim()}
-              className="rounded-xl bg-[#52685A] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#405547] disabled:cursor-not-allowed disabled:opacity-50"
+          {showForm && (
+            <div
+              id="pantry-item-form"
+              className="mt-2 rounded-2xl bg-white p-4 shadow-sm"
             >
-              {saving
-                ? "Guardando…"
-                : editingId !== null
-                  ? "Guardar cambios"
-                  : "Añadir al almacén"}
-            </button>
+              <div className="mb-3">
+                <h2 className="font-semibold">
+                  {editingId !== null ? "Editar ingrediente" : "Nuevo ingrediente"}
+                </h2>
+                <p className="mt-0.5 text-xs text-[#788675]">
+                  Las cantidades, fechas y prioridades son opcionales.
+                </p>
+              </div>
 
-            {editingId !== null && (
-              <button
-                type="button"
-                onClick={resetForm}
-                className="rounded-xl bg-[#F1EFE8] px-4 py-2.5 text-sm text-[#52685A] hover:bg-[#E8E5DC]"
-              >
-                Cancelar
-              </button>
-            )}
-          </div>
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                <label className="text-sm font-medium">
+                  Ingrediente
+                  <input
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void saveItem();
+                      }
+                    }}
+                    placeholder="Ej. Arroz"
+                    className={`${inputClass} mt-1`}
+                  />
+                </label>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="text-sm font-medium">
+                    Cantidad{" "}
+                    <span className="font-normal text-[#9A9E94]">(opcional)</span>
+                    <input
+                      value={quantity}
+                      onChange={(event) => setQuantity(event.target.value)}
+                      inputMode="decimal"
+                      placeholder="Ej. 500"
+                      className={`${inputClass} mt-1`}
+                    />
+                  </label>
+                  <label className="text-sm font-medium">
+                    Unidad{" "}
+                    <span className="font-normal text-[#9A9E94]">(opcional)</span>
+                    <input
+                      value={unit}
+                      onChange={(event) => setUnit(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void saveItem();
+                        }
+                      }}
+                      placeholder="g, kg, ml…"
+                      className={`${inputClass} mt-1`}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <details className="mt-3 rounded-xl bg-[#F7F5EF] px-3 py-2">
+                <summary className="cursor-pointer text-sm font-medium text-[#52685A]">
+                  Conservación y fechas
+                </summary>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={isOpened}
+                      onChange={(event) => {
+                        setIsOpened(event.target.checked);
+                        if (!event.target.checked) setOpenedAt("");
+                      }}
+                      className="h-4 w-4 accent-[#52685A]"
+                    />
+                    Producto abierto
+                  </label>
+
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={useSoon}
+                      onChange={(event) => setUseSoon(event.target.checked)}
+                      className="h-4 w-4 accent-[#52685A]"
+                    />
+                    Hay que gastarlo pronto
+                  </label>
+
+                  <label className="text-sm font-medium">
+                    Fecha de apertura
+                    <input
+                      type="date"
+                      value={openedAt}
+                      onChange={(event) => setOpenedAt(event.target.value)}
+                      disabled={!isOpened}
+                      className={`${inputClass} mt-1 disabled:opacity-50`}
+                    />
+                  </label>
+
+                  <label className="text-sm font-medium">
+                    Fecha de caducidad
+                    <input
+                      type="date"
+                      value={expiryDate}
+                      onChange={(event) => setExpiryDate(event.target.value)}
+                      className={`${inputClass} mt-1`}
+                    />
+                  </label>
+                </div>
+              </details>
+
+              {errorMessage && (
+                <p
+                  role="alert"
+                  className="mt-3 rounded-xl bg-[#FBF0EC] px-3 py-2 text-sm text-[#955F53]"
+                >
+                  {errorMessage}
+                </p>
+              )}
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void saveItem()}
+                  disabled={saving || !name.trim()}
+                  className="rounded-xl bg-[#52685A] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#405547] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving
+                    ? "Guardando…"
+                    : editingId !== null
+                      ? "Guardar cambios"
+                      : "Añadir al almacén"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetForm();
+                    setErrorMessage("");
+                  }}
+                  className="rounded-xl bg-[#F1EFE8] px-4 py-2.5 text-sm text-[#52685A] hover:bg-[#E8E5DC]"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
         </section>
 
         <details className="mb-4 rounded-xl px-1 py-1">
@@ -956,8 +1034,20 @@ export default function AlmacenPage() {
             </span>
           </div>
 
+          {errorMessage && !showForm && (
+            <p
+              role="alert"
+              className="mb-3 rounded-xl bg-[#FBF0EC] px-3 py-2 text-sm text-[#955F53]"
+            >
+              {errorMessage}
+            </p>
+          )}
+
           {shoppingMessage && (
-            <p role="status" className="mb-3 rounded-xl bg-[#E7EDE3] px-3 py-2 text-sm text-[#52685A]">
+            <p
+              role="status"
+              className="mb-3 rounded-xl bg-[#E7EDE3] px-3 py-2 text-sm text-[#52685A]"
+            >
               {shoppingMessage}
             </p>
           )}
@@ -973,7 +1063,9 @@ export default function AlmacenPage() {
           {loading ? (
             <div className="rounded-2xl bg-white px-5 py-10 text-center shadow-sm">
               <div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-[#D8D5CB] border-t-[#52685A]" />
-              <p className="mt-3 text-sm text-[#788675]">Cargando tu almacén…</p>
+              <p className="mt-3 text-sm text-[#788675]">
+                Cargando tu almacén…
+              </p>
             </div>
           ) : filteredItems.length === 0 ? (
             <div className="rounded-2xl bg-white px-5 py-8 text-center shadow-sm">
@@ -984,7 +1076,7 @@ export default function AlmacenPage() {
               <p className="mx-auto mt-1 max-w-sm text-sm text-[#788675]">
                 {search
                   ? "Prueba con otro nombre o borra la búsqueda."
-                  : "Añade lo que tienes en casa para organizar tus alimentos."}
+                  : "Pulsa «Añadir ingrediente» para empezar a organizar lo que tienes en casa."}
               </p>
             </div>
           ) : (
@@ -1048,7 +1140,7 @@ export default function AlmacenPage() {
                                       })
                                     }
                                     aria-label={`Estado de ${item.name}`}
-                                    className={`max-w-full rounded-lg border-0 px-2 py-1 text-[11px] font-semibold outline-none disabled:opacity-50 ${
+                                    className={`max-w-full rounded-lg border-0 px-2 py-1 text-base font-semibold outline-none disabled:opacity-50 sm:text-[11px] ${
                                       item.isOpened
                                         ? "bg-[#F8EBDD] text-[#916B43]"
                                         : "bg-[#E7EDE3] text-[#52685A]"
@@ -1065,13 +1157,17 @@ export default function AlmacenPage() {
                                   )}
 
                                   {expiryInfo && (
-                                    <span className={`rounded-lg px-2 py-1 text-[11px] font-medium ${expiryInfo.className}`}>
+                                    <span
+                                      className={`rounded-lg px-2 py-1 text-[11px] font-medium ${expiryInfo.className}`}
+                                    >
                                       {expiryInfo.label}
                                     </span>
                                   )}
 
                                   {updating && (
-                                    <span className="text-[11px] text-[#788675]">Guardando…</span>
+                                    <span className="text-[11px] text-[#788675]">
+                                      Guardando…
+                                    </span>
                                   )}
                                 </div>
 
@@ -1091,7 +1187,7 @@ export default function AlmacenPage() {
                                             openedAt: event.target.value,
                                           })
                                         }
-                                        className="mt-1 w-full rounded-lg border border-[#E1DED5] bg-white px-2 py-1.5 text-xs disabled:opacity-40"
+                                        className="mt-1 w-full rounded-lg border border-[#E1DED5] bg-white px-2 py-1.5 text-base disabled:opacity-40 sm:text-xs"
                                       />
                                     </label>
 
@@ -1106,7 +1202,7 @@ export default function AlmacenPage() {
                                             expiryDate: event.target.value,
                                           })
                                         }
-                                        className="mt-1 w-full rounded-lg border border-[#E1DED5] bg-white px-2 py-1.5 text-xs disabled:opacity-40"
+                                        className="mt-1 w-full rounded-lg border border-[#E1DED5] bg-white px-2 py-1.5 text-base disabled:opacity-40 sm:text-xs"
                                       />
                                     </label>
 
@@ -1137,10 +1233,13 @@ export default function AlmacenPage() {
                                         )?.id ?? ""
                                       }
                                       onChange={(event) =>
-                                        void changePantryCategory(item, Number(event.target.value))
+                                        void changePantryCategory(
+                                          item,
+                                          Number(event.target.value)
+                                        )
                                       }
                                       aria-label={`Categoría de ${item.name}`}
-                                      className="max-w-[150px] rounded-lg border border-[#E1DED5] bg-[#FBFAF7] px-1.5 py-1 text-[11px] text-[#52685A] outline-none focus:border-[#879078]"
+                                      className="max-w-[150px] rounded-lg border border-[#E1DED5] bg-[#FBFAF7] px-1.5 py-1 text-base text-[#52685A] outline-none focus:border-[#879078] sm:text-[11px]"
                                     >
                                       {categories.map((option) => (
                                         <option key={option.id} value={option.id}>
@@ -1152,7 +1251,9 @@ export default function AlmacenPage() {
 
                                   <button
                                     type="button"
-                                    onClick={() => void addPantryItemToShoppingList(item)}
+                                    onClick={() =>
+                                      void addPantryItemToShoppingList(item)
+                                    }
                                     disabled={shoppingActionId === item.id}
                                     className="rounded-lg bg-[#F0F2EB] px-2.5 py-1.5 text-[11px] font-semibold text-[#52685A] transition hover:bg-[#E2E8DC] disabled:opacity-50"
                                   >
