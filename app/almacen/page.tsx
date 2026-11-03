@@ -12,6 +12,7 @@ import {
   DEFAULT_CATEGORY_NAMES,
   resolveAutomaticCategory,
 } from "@/lib/ingredient-category";
+import IngredientAutocomplete from "@/app/components/IngredientAutocomplete";
 
 type PantryItem = {
   id: number;
@@ -872,18 +873,18 @@ export default function AlmacenPage() {
               <div className="grid gap-2.5 sm:grid-cols-2">
                 <label className="text-sm font-medium">
                   Ingrediente
-                  <input
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        void saveItem();
-                      }
-                    }}
-                    placeholder="Ej. Arroz"
-                    className={`${inputClass} mt-1`}
-                  />
+                  <IngredientAutocomplete
+  value={name}
+  onChange={setName}
+  onKeyDown={(event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void saveItem();
+    }
+  }}
+  placeholder="Ej. Arroz"
+  className={`${inputClass} mt-1`}
+/>
                 </label>
 
                 <div className="grid grid-cols-2 gap-2">

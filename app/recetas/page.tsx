@@ -3,6 +3,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import IngredientAutocomplete from "@/app/components/IngredientAutocomplete";
 
 import { supabase } from "@/lib/supabase";
 import {
@@ -77,6 +78,26 @@ function normalizeText(value: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase();
+}
+
+function getIngredientInputParts(value: string) {
+  const clean = value.trim();
+  const match = clean.match(/^(\d+(?:[.,]\d+)?(?:\s*\/\s*\d+)?)\s*(g|kg|ml|l|ud|uds|unidad|unidades|cda|cdas|cdta|cdtas)\s+(.+)$/i);
+
+  if (match) {
+    return { quantity: match[1], unit: match[2], name: match[3] };
+  }
+
+  const quantityOnly = clean.match(/^(\d+(?:[.,]\d+)?(?:\s*\/\s*\d+)?)\s+(.+)$/);
+  if (quantityOnly) {
+    return { quantity: quantityOnly[1], unit: "", name: quantityOnly[2] };
+  }
+
+  return { quantity: "", unit: "", name: clean };
+}
+
+function formatIngredientInput(quantity: string, unit: string, name: string) {
+  return [quantity.trim(), unit.trim(), name.trim()].filter(Boolean).join(" ");
 }
 
 function parseIngredientText(text: string): ParsedIngredient {
@@ -769,6 +790,27 @@ export default function RecetasPage() {
     setNewRecipeSteps("");
   }
 
+  function updateNewRecipeIngredient(index: number, field: "quantity" | "unit" | "name", value: string) {
+    const lines = newRecipeIngredients.split("\n");
+    while (lines.length <= index) lines.push("");
+    const parts = getIngredientInputParts(lines[index]);
+    parts[field] = value;
+    lines[index] = formatIngredientInput(parts.quantity, parts.unit, parts.name);
+    setNewRecipeIngredients(lines.join("\n"));
+  }
+
+  function addNewRecipeIngredient() {
+    const lines = newRecipeIngredients ? newRecipeIngredients.split("\n") : [];
+    lines.push("");
+    setNewRecipeIngredients(lines.join("\n"));
+  }
+
+  function removeNewRecipeIngredient(index: number) {
+    const lines = newRecipeIngredients.split("\n");
+    lines.splice(index, 1);
+    setNewRecipeIngredients(lines.join("\n"));
+  }
+
   async function handleCreateRecipe() {
     const name = newRecipeName.trim();
 
@@ -1096,23 +1138,26 @@ export default function RecetasPage() {
               </div>
 
               <div>
-                <label className="mb-1.5 block text-sm font-medium">
-                  Ingredientes
-                </label>
-
-                <p className="mb-2 text-xs text-[#7A827D]">
-                  Uno por línea. Ejemplo: 200 g pasta
-                </p>
-
-                <textarea
-                  value={newRecipeIngredients}
-                  onChange={(event) =>
-                    setNewRecipeIngredients(event.target.value)
-                  }
-                  placeholder={"200 g pasta\n1 cebolla\n2 huevos"}
-                  rows={6}
-                  className="w-full resize-none rounded-2xl border border-[#DEDCD2] bg-white px-4 py-3 text-sm outline-none focus:border-[#52685A]"
-                />
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <label className="block text-sm font-medium">Ingredientes</label>
+                  <button type="button" onClick={addNewRecipeIngredient} className="rounded-xl bg-[#E8EEE8] px-3 py-2 text-xs font-semibold text-[#52685A]">+ Añadir</button>
+                </div>
+                <p className="mb-3 text-xs text-[#7A827D]">Indica cantidad y unidad si las conoces; escribe el ingrediente para ver sugerencias.</p>
+                <div className="space-y-2">
+                  {(newRecipeIngredients ? newRecipeIngredients.split("\n") : [""]).map((line, index) => {
+                    const parts = getIngredientInputParts(line);
+                    return (
+                      <div key={index} className="flex items-start gap-2">
+                        <input value={parts.quantity} onChange={(event) => updateNewRecipeIngredient(index, "quantity", event.target.value)} placeholder="Cant." aria-label="Cantidad" className="w-[76px] shrink-0 rounded-xl border border-[#DEDCD2] bg-white px-2.5 py-3 text-sm outline-none focus:border-[#52685A]" />
+                        <input value={parts.unit} onChange={(event) => updateNewRecipeIngredient(index, "unit", event.target.value)} placeholder="Unidad" aria-label="Unidad" className="w-[78px] shrink-0 rounded-xl border border-[#DEDCD2] bg-white px-2.5 py-3 text-sm outline-none focus:border-[#52685A]" />
+                        <div className="min-w-0 flex-1">
+                          <IngredientAutocomplete value={parts.name} onChange={(value) => updateNewRecipeIngredient(index, "name", value)} placeholder="Ingrediente" className="w-full rounded-xl border border-[#DEDCD2] bg-white px-4 py-3 text-sm outline-none focus:border-[#52685A]" />
+                        </div>
+                        <button type="button" onClick={() => removeNewRecipeIngredient(index)} aria-label="Eliminar ingrediente" className="flex h-11 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F4EAE8] text-lg text-[#A36D68]">×</button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               <div>

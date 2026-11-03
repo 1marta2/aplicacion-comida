@@ -11,6 +11,7 @@ import {
   resolveAutomaticCategory,
 } from "@/lib/ingredient-category";
 import { supabase } from "@/lib/supabase";
+import IngredientAutocomplete from "@/app/components/IngredientAutocomplete";
 
 type Recipe = {
   id: string;
@@ -1615,14 +1616,12 @@ export default function ShoppingPage() {
                   }}
                   className="space-y-3"
                 >
-                  <input
-                    type="text"
-                    value={manualName}
-                    onChange={(event) => setManualName(event.target.value)}
-                    placeholder="Nombre del producto (ej. Café)"
-                    autoComplete="off"
-                    className="w-full rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-4 py-3 text-base text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
-                  />
+                  <IngredientAutocomplete
+  value={manualName}
+  onChange={setManualName}
+  placeholder="Nombre del producto (ej. Café)"
+  className="w-full rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-4 py-3 text-base text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
+/>
 
                   <div className="grid grid-cols-2 gap-3">
                     <input

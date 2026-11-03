@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { ingredientNamesMatch } from "@/lib/ingredient-availability";
+import { getIngredientMatchKind } from "@/lib/ingredient-availability";
+import IngredientAutocomplete from "@/app/components/IngredientAutocomplete";
 
 type Recipe = {
   id: string;
@@ -408,6 +409,23 @@ function formatNumber(value: number) {
     .replace(".", ",");
 }
 
+function getIngredientInputParts(value: string) {
+  const clean = value.trim();
+  const match = clean.match(/^(\d+(?:[.,]\d+)?(?:\s*\/\s*\d+)?)\s*([a-zA-ZÀ-ÿ]+)\s+(?:de\s+|del\s+)?(.+)$/);
+  if (match) {
+    return { quantity: match[1], unit: match[2], name: match[3] };
+  }
+  const quantityOnly = clean.match(/^(\d+(?:[.,]\d+)?(?:\s*\/\s*\d+)?)\s+(.+)$/);
+  if (quantityOnly) {
+    return { quantity: quantityOnly[1], unit: "", name: quantityOnly[2] };
+  }
+  return { quantity: "", unit: "", name: clean };
+}
+
+function formatIngredientInput(quantity: string, unit: string, name: string) {
+  return [quantity.trim(), unit.trim(), name.trim()].filter(Boolean).join(" ");
+}
+
 function normalizeIngredientName(value: string) {
   return value
     .toLowerCase()
@@ -686,10 +704,10 @@ function pantryMatchesIngredient(
   ingredient: string,
   pantry: PantryItem
 ) {
-  return ingredientNamesMatch(
+  return getIngredientMatchKind(
     parseIngredient(ingredient).name,
     pantry.name
-  );
+  ) !== "none";
 }
 
 function getIngredientStatus(
@@ -700,11 +718,18 @@ function getIngredientStatus(
 
   const matchingPantry =
     pantryItems.find((pantry) =>
-      pantryMatchesIngredient(
-        ingredient,
-        pantry
-      )
+      pantryMatchesIngredient(ingredient, pantry)
     );
+
+  const matchKind = matchingPantry
+    ? getIngredientMatchKind(parsed.name, matchingPantry.name)
+    : "none";
+
+  const matchLabel = matchKind === "equivalent"
+    ? "Tienes un equivalente"
+    : matchKind === "alternative"
+      ? "Tienes una alternativa"
+      : "Lo tienes";
 
   if (!matchingPantry) {
     return {
@@ -717,16 +742,18 @@ function getIngredientStatus(
   if (matchingPantry.quantity === null) {
     return {
       status: "owned" as const,
-      text: "Lo tienes",
-      detail: "Lo tienes en casa",
+      text: matchLabel,
+      detail: matchKind === "exact"
+        ? "Lo tienes en casa"
+        : `En tu almacén: ${matchingPantry.name}`,
     };
   }
 
   if (parsed.quantity === null) {
     return {
       status: "owned" as const,
-      text: "Lo tienes",
-      detail: `Tienes ${formatNumber(
+      text: matchLabel,
+      detail: `${matchingPantry.name} · ${formatNumber(
         matchingPantry.quantity
       )} ${matchingPantry.unit || ""}`.trim(),
     };
@@ -771,8 +798,8 @@ function getIngredientStatus(
   ) {
     return {
       status: "owned" as const,
-      text: "Lo tienes",
-      detail: `Tienes suficiente · ${formatNumber(
+      text: matchLabel,
+      detail: `${matchKind === "exact" ? "Cantidad suficiente" : `${matchingPantry.name} · cantidad suficiente`} · ${formatNumber(
         matchingPantry.quantity
       )} ${matchingPantry.unit || ""}`.trim(),
     };
@@ -2632,21 +2659,21 @@ export default function RecipeDetailPage({
 
   function updateIngredient(
     index: number,
-    value: string
+    value: string,
+    field?: "quantity" | "unit" | "name"
   ) {
     if (!editRecipe) return;
 
-    const ingredients = [
-      ...editRecipe.ingredients,
-    ];
+    const ingredients = [...editRecipe.ingredients];
+    if (field) {
+      const parts = getIngredientInputParts(ingredients[index] || "");
+      parts[field] = value;
+      ingredients[index] = formatIngredientInput(parts.quantity, parts.unit, parts.name);
+    } else {
+      ingredients[index] = value;
+    }
 
-    ingredients[index] =
-      value;
-
-    setEditRecipe({
-      ...editRecipe,
-      ingredients,
-    });
+    setEditRecipe({ ...editRecipe, ingredients });
   }
 
   function addIngredient() {
@@ -4178,27 +4205,21 @@ export default function RecipeDetailPage({
                         index
                       ) => (
                         <div
-                          key={
-                            index
-                          }
-                          className="flex gap-2"
+                          key={index}
+                          className="flex items-start gap-2"
                         >
-                          <input
-                            value={
-                              ingredient
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              updateIngredient(
-                                index,
-                                event
-                                  .target
-                                  .value
-                              )
-                            }
-                            className="min-w-0 flex-1 rounded-xl border border-[#C9D0CA] bg-white px-4 py-3 text-sm font-medium text-[#303A33] outline-none placeholder:text-[#89928B] focus:border-[#52685A] focus:ring-1 focus:ring-[#52685A]"
-                          />
+                          {(() => {
+                            const parts = getIngredientInputParts(ingredient);
+                            return (
+                              <>
+                                <input value={parts.quantity} onChange={(event) => updateIngredient(index, event.target.value, "quantity")} placeholder="Cant." aria-label="Cantidad" className="w-[76px] shrink-0 rounded-xl border border-[#C9D0CA] bg-white px-2.5 py-3 text-sm text-[#303A33] outline-none focus:border-[#52685A]" />
+                                <input value={parts.unit} onChange={(event) => updateIngredient(index, event.target.value, "unit")} placeholder="Unidad" aria-label="Unidad" className="w-[78px] shrink-0 rounded-xl border border-[#C9D0CA] bg-white px-2.5 py-3 text-sm text-[#303A33] outline-none focus:border-[#52685A]" />
+                                <div className="min-w-0 flex-1">
+                                  <IngredientAutocomplete value={parts.name} onChange={(value) => updateIngredient(index, value, "name")} placeholder="Ingrediente" className="w-full rounded-xl border border-[#C9D0CA] bg-white px-4 py-3 text-sm font-medium text-[#303A33] outline-none placeholder:text-[#89928B] focus:border-[#52685A] focus:ring-1 focus:ring-[#52685A]" />
+                                </div>
+                              </>
+                            );
+                          })()}
 
                           <button
                             onClick={() =>
