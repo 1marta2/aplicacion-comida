@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import IngredientAutocomplete from "@/app/components/IngredientAutocomplete";
+import HabitualDishesPanel from "@/app/components/HabitualDishesPanel";
 
 import { supabase } from "@/lib/supabase";
 import {
@@ -875,6 +876,9 @@ export default function RecetasPage() {
             +
           </button>
         </div>
+
+                {/* PLATOS HABITUALES */}
+        <HabitualDishesPanel />
 
         {/* BUSCADOR */}
         <div className="mb-4 sm:mb-5">
