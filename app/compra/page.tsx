@@ -12,6 +12,8 @@ import {
 } from "@/lib/ingredient-category";
 import { supabase } from "@/lib/supabase";
 import IngredientAutocomplete from "@/app/components/IngredientAutocomplete";
+import PantrySection from "@/app/components/PantrySection";
+import IngredientsCatalog from "@/app/components/IngredientsCatalog";
 
 type Recipe = {
   id: string;
@@ -240,6 +242,7 @@ export default function ShoppingPage() {
   const [addingManual, setAddingManual] = useState(false);
   const [isAddFormOpen, setIsAddFormOpen] = useState(false);
 
+  const [activeSection, setActiveSection] = useState<"lista" | "almacen" | "ingredientes">("lista");
   const [activeList, setActiveList] = useState<"recipe" | "manual">("manual");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -310,7 +313,6 @@ export default function ShoppingPage() {
         assignments[Number(row.ingredient_id)] = Number(row.category_id);
       });
 
-      // 1. Recetas del usuario.
       const { data: recipesData, error: recipesError } = await supabase
         .from("recipes")
         .select("id, title")
@@ -330,7 +332,6 @@ export default function ShoppingPage() {
 
       setAvailableRecipes(recipeMap);
 
-      // 2. Planificación de esta semana.
       const { monday, sunday } = getWeekRange();
 
       const { data: planningData, error: planningError } = await supabase
@@ -350,7 +351,6 @@ export default function ShoppingPage() {
         ),
       ];
 
-      // 3. Ingredientes de las recetas planificadas.
       let recipeIngredients: RecipeIngredientRow[] = [];
 
       if (plannedRecipeIds.length > 0) {
@@ -368,7 +368,6 @@ export default function ShoppingPage() {
           []) as RecipeIngredientRow[];
       }
 
-      // 4. Nombres de los ingredientes.
       const ingredientIds = [
         ...new Set(
           recipeIngredients
@@ -397,7 +396,6 @@ export default function ShoppingPage() {
         ingredientNameMap.set(Number(ingredient.id), ingredient.name);
       }
 
-      // 5. Generamos la lista de ingredientes de recetas.
       const generatedMap = new Map<string, ShoppingItem>();
 
       for (const plannedRecipeId of plannedRecipeIds) {
@@ -468,7 +466,6 @@ export default function ShoppingPage() {
         }
       }
 
-      // 6. Despensa.
       const { data: pantryData, error: pantryError } = await supabase
         .from("pantry")
         .select("id, ingredient_id, quantity, unit")
@@ -517,7 +514,6 @@ export default function ShoppingPage() {
 
       setPantryItems(loadedPantry);
 
-      // 7. Lista de compra existente.
       const { data: existingShoppingData, error: shoppingError } =
         await supabase
           .from("shopping_list")
@@ -529,7 +525,6 @@ export default function ShoppingPage() {
       const existingShopping = (existingShoppingData ||
         []) as StoredShoppingRow[];
 
-      // 8. Identificamos los productos relacionados con recetas.
       const existingShoppingIds = existingShopping
         .map((item) => Number(item.id))
         .filter((id) => Number.isFinite(id));
@@ -551,7 +546,6 @@ export default function ShoppingPage() {
         existingRelations.map((row) => Number(row.shopping_list_id))
       );
 
-      // Los productos sin relación con una receta son manuales.
       const manualItems: ShoppingItem[] = existingShopping
         .filter((item) => !generatedShoppingIds.has(Number(item.id)))
         .map((item) => ({
@@ -571,7 +565,6 @@ export default function ShoppingPage() {
           source: "manual",
         }));
 
-      // 9. Sincronizamos los productos de recetas.
       const generatedItems = [...generatedMap.values()];
 
       const generatedIngredientIds = new Set(
@@ -591,7 +584,6 @@ export default function ShoppingPage() {
         existingGeneratedByIngredient.set(Number(item.ingredient_id), item);
       }
 
-      // Eliminamos únicamente productos de recetas que ya no están planificadas.
       const obsoleteGeneratedIds = existingGeneratedShopping
         .filter(
           (item) => !generatedIngredientIds.has(Number(item.ingredient_id))
@@ -615,7 +607,6 @@ export default function ShoppingPage() {
         if (deleteShoppingError) throw deleteShoppingError;
       }
 
-      // Creamos o actualizamos los productos de recetas.
       const finalRecipeShoppingItems: ShoppingItem[] = [];
 
       for (const item of generatedItems) {
@@ -656,12 +647,10 @@ export default function ShoppingPage() {
         }
 
         finalRecipeShoppingItems.push({
-          ...item,
-          id: String(shoppingId),
+          ...item,id: String(shoppingId),
         });
       }
 
-      // 10. Actualizamos las relaciones entre recetas y productos.
       const shoppingIds = finalRecipeShoppingItems
         .map((item) => Number(item.id))
         .filter((id) => Number.isFinite(id));
@@ -716,7 +705,6 @@ export default function ShoppingPage() {
         if (relationError) throw relationError;
       }
 
-      // 11. Aplicamos la despensa únicamente a los productos de recetas.
       const recipeItemsWithPantry = finalRecipeShoppingItems.map((item) => {
         const pantryMatch = loadedPantry.find(
           (pantry) =>
@@ -787,7 +775,6 @@ export default function ShoppingPage() {
         };
       });
 
-      // 12. Guardamos los productos y respetamos las categorías personalizadas.
       const categoryNameById = new Map(
         categoryRows.map((category) => [
           Number(category.id),
@@ -806,7 +793,6 @@ export default function ShoppingPage() {
 
       setShoppingItems(allItems);
 
-      // Conservamos los checks de los productos que siguen existiendo.
       const allValidIds = new Set(allItems.map((item) => item.id));
 
       const checkedIds = existingShopping
@@ -963,30 +949,22 @@ export default function ShoppingPage() {
         if (insertError) throw insertError;
       }
 
-      // Al moverlo al almacén, lo quitamos de la lista de compra.
+      // Se conserva en la lista y se marca como comprado.
       const shoppingId = Number(item.id);
 
       if (Number.isFinite(shoppingId)) {
-        const { error: relationDeleteError } = await supabase
-          .from("shopping_list_recipes")
-          .delete()
-          .eq("shopping_list_id", shoppingId);
-
-        if (relationDeleteError) throw relationDeleteError;
-
-        const { error: shoppingDeleteError } = await supabase
+        const { error: shoppingUpdateError } = await supabase
           .from("shopping_list")
-          .delete()
+          .update({ checked: true })
           .eq("id", shoppingId)
           .eq("user_id", user.id);
 
-        if (shoppingDeleteError) throw shoppingDeleteError;
+        if (shoppingUpdateError) throw shoppingUpdateError;
       }
 
-      setShoppingItems((current) =>
-        current.filter((entry) => entry.id !== item.id)
+      setCheckedItems((current) =>
+        current.includes(item.id) ? current : [...current, item.id]
       );
-      setCheckedItems((current) => current.filter((id) => id !== item.id));
 
       setPantryItems((current) => {
         const found = current.find(
@@ -1046,7 +1024,7 @@ export default function ShoppingPage() {
       });
 
       setActionMessage(
-        `${item.ingredientName} se ha movido al almacén y se ha quitado de la compra.`
+        `${item.ingredientName} se ha añadido al almacén y sigue en tu lista como comprado.`
       );
     } catch (error) {
       console.error("Error añadiendo producto al almacén:", error);
@@ -1396,9 +1374,13 @@ export default function ShoppingPage() {
     [shoppingItems]
   );
 
+  // Los ingredientes de recetas que ya están en casa solo se ocultan
+  // si aún no se han marcado como comprados.
   const displayedItems =
     activeList === "recipe"
-      ? recipeItems.filter((item) => !item.owned)
+      ? recipeItems.filter(
+          (item) => !item.owned || checkedItems.includes(item.id)
+        )
       : manualItems;
 
   const checkedCount = displayedItems.filter((item) =>
@@ -1436,21 +1418,20 @@ export default function ShoppingPage() {
   return (
     <main className="min-h-screen bg-[#F6F3EC] px-4 py-6 pb-28 sm:px-6">
       <div className="mx-auto max-w-5xl">
-        {/* CABECERA */}
         <div className="mb-6">
           <p className="text-sm font-medium text-[#879078]">Compra</p>
 
           <div className="mt-1 flex items-end justify-between gap-4">
             <div>
               <h1 className="text-3xl font-semibold tracking-tight text-[#30352C]">
-                Lista de compra
+                Compra
               </h1>
               <p className="mt-1 text-sm text-[#879078]">
-                Todo lo que necesitas, organizado para ti.
+                Organiza lo que necesitas, lo que tienes y tus ingredientes.
               </p>
             </div>
 
-            {checkedCount > 0 && (
+            {activeSection === "lista" && checkedCount > 0 && (
               <button
                 type="button"
                 onClick={() => void clearChecked()}
@@ -1462,39 +1443,33 @@ export default function ShoppingPage() {
           </div>
         </div>
 
-        {/* TARJETA MI ALMACÉN */}
-        <Link
-          href="/almacen"
-          className="mb-6 flex items-center gap-4 rounded-3xl border border-[#DDE5D9] bg-[#E7EDE3] p-5 transition hover:bg-[#DDE8DF] active:scale-[0.99]"
-        >
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/80 text-3xl">
-            🥬
-          </div>
 
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold uppercase tracking-wider text-[#788675]">
-              Lo que tienes en casa
-            </p>
-            <h2 className="mt-1 text-lg font-semibold text-[#26352D]">
-              Mi almacén
-            </h2>
-            <p className="mt-1 text-sm text-[#647361]">
-              {pantryItems.length === 0
-                ? "Añade lo que tienes en casa"
-                : `${pantryItems.length} ${
-                    pantryItems.length === 1
-                      ? "ingrediente guardado"
-                      : "ingredientes guardados"
-                  }`}
-            </p>
-          </div>
 
-          <span className="text-2xl text-[#52685A]" aria-hidden="true">
-            →
-          </span>
-        </Link>
+        <nav aria-label="Apartados de compra" className="mb-5 grid grid-cols-3 gap-1 rounded-2xl bg-white p-1.5 shadow-sm">
+          {([
+            { id: "lista", label: "Lista", icon: "🛒" },
+            { id: "almacen", label: "Almacén", icon: "🥬" },
+            { id: "ingredientes", label: "Ingredientes", icon: "🏷️" },
+          ] as const).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveSection(tab.id)}
+              aria-pressed={activeSection === tab.id}
+              className={`min-w-0 rounded-xl px-2 py-3 text-xs font-semibold transition sm:px-3 sm:text-sm ${
+                activeSection === tab.id
+                  ? "bg-[#52685A] text-white shadow-sm"
+                  : "text-[#687260] hover:bg-[#F1F2ED]"
+              }`}
+            >
+              <span className="mr-1 sm:mr-2" aria-hidden="true">{tab.icon}</span>
+              {tab.label}
+            </button>
+          ))}
+        </nav>
 
-        {/* PESTAÑAS */}
+        {activeSection === "lista" && (
+          <>
         <section className="mb-6 rounded-3xl bg-white p-2 shadow-sm">
           <div className="grid grid-cols-2 gap-2">
             <button
@@ -1563,7 +1538,6 @@ export default function ShoppingPage() {
           </p>
         )}
 
-        {/* FORMULARIO MANUAL DESPLEGABLE */}
         {activeList === "manual" && (
           <section className="mt-4 mb-6 sm:mt-6">
             {!isAddFormOpen ? (
@@ -1617,11 +1591,11 @@ export default function ShoppingPage() {
                   className="space-y-3"
                 >
                   <IngredientAutocomplete
-  value={manualName}
-  onChange={setManualName}
-  placeholder="Nombre del producto (ej. Café)"
-  className="w-full rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-4 py-3 text-base text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
-/>
+                    value={manualName}
+                    onChange={setManualName}
+                    placeholder="Nombre del producto (ej. Café)"
+                    className="w-full rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-4 py-3 text-base text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
+                  />
 
                   <div className="grid grid-cols-2 gap-3">
                     <input
@@ -1657,7 +1631,6 @@ export default function ShoppingPage() {
           </section>
         )}
 
-        {/* LISTA VACÍA */}
         {displayedItems.length === 0 ? (
           <section className="rounded-3xl bg-white px-6 py-12 text-center shadow-sm">
             <div className="text-5xl">
@@ -1832,8 +1805,6 @@ export default function ShoppingPage() {
           </div>
         )}
 
-
-        {/* ERROR */}
         {errorMessage && (
           <section
             role="alert"
@@ -1843,7 +1814,6 @@ export default function ShoppingPage() {
           </section>
         )}
 
-        {/* ORGANIZAR CATEGORÍAS */}
         <details className="mt-6 rounded-2xl px-1 py-2">
           <summary className="cursor-pointer list-none text-xs font-medium text-[#92958B] transition hover:text-[#52685A]">
             ⚙️ Organizar categorías
@@ -1859,6 +1829,12 @@ export default function ShoppingPage() {
             />
           </div>
         </details>
+
+          </>
+        )}
+
+        {activeSection === "almacen" && <PantrySection />}
+        {activeSection === "ingredientes" && <IngredientsCatalog />}
       </div>
     </main>
   );

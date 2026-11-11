@@ -18,6 +18,14 @@ type Props = {
   onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
 };
 
+function normalizeText(text: string) {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es")
+    .trim();
+}
+
 export default function IngredientAutocomplete({
   value,
   onChange,
@@ -25,6 +33,7 @@ export default function IngredientAutocomplete({
   className = "",
   onKeyDown,
 }: Props) {
+  const [allIngredients, setAllIngredients] = useState<Ingredient[]>([]);
   const [suggestions, setSuggestions] = useState<Ingredient[]>([]);
   const [isFocused, setIsFocused] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -33,7 +42,33 @@ export default function IngredientAutocomplete({
   const listId = useId();
 
   useEffect(() => {
-    const search = value.trim();
+    let cancelled = false;
+
+    async function loadIngredients() {
+      const { data, error } = await supabase
+        .from("ingredients")
+        .select("id, name")
+        .order("name", { ascending: true });
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("Error cargando ingredientes:", error);
+        return;
+      }
+
+      setAllIngredients((data || []) as Ingredient[]);
+    }
+
+    void loadIngredients();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const search = normalizeText(value);
 
     if (!isFocused || search.length < 1) {
       setSuggestions([]);
@@ -42,43 +77,24 @@ export default function IngredientAutocomplete({
       return;
     }
 
-    let cancelled = false;
+    setLoading(true);
 
-    const timeout = window.setTimeout(async () => {
-      setLoading(true);
+    const timeout = window.setTimeout(() => {
+      const filtered = allIngredients
+        .filter((ingredient) =>
+          normalizeText(ingredient.name).startsWith(search)
+        )
+        .slice(0, 8);
 
-      try {
-        const { data, error } = await supabase
-          .from("ingredients")
-          .select("id, name")
-          .ilike("name", `${search}%`)
-          .order("name", { ascending: true })
-          .limit(8);
-
-        if (cancelled) return;
-
-        if (error) throw error;
-
-        setSuggestions((data || []) as Ingredient[]);
-        setActiveIndex(-1);
-      } catch (error) {
-        console.error("Error buscando ingredientes:", error);
-
-        if (!cancelled) {
-          setSuggestions([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }, 180);
+      setSuggestions(filtered);
+      setActiveIndex(-1);
+      setLoading(false);
+    }, 100);
 
     return () => {
-      cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [value, isFocused]);
+  }, [value, isFocused, allIngredients]);
 
   function selectIngredient(ingredient: Ingredient) {
     onChange(ingredient.name);
@@ -180,13 +196,11 @@ export default function IngredientAutocomplete({
         </ul>
       )}
 
-      {isFocused &&
-        value.trim().length > 0 &&
-        loading && (
-          <p className="absolute left-0 right-0 z-50 mt-1 rounded-xl border border-[#E1DED5] bg-white px-3 py-2 text-xs text-[#879078] shadow-sm">
-            Buscando ingredientes…
-          </p>
-        )}
+      {isFocused && value.trim().length > 0 && loading && (
+        <p className="absolute left-0 right-0 z-50 mt-1 rounded-xl border border-[#E1DED5] bg-white px-3 py-2 text-xs text-[#879078] shadow-sm">
+          Buscando ingredientes…
+        </p>
+      )}
     </div>
   );
 }
