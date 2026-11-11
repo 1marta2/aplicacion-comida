@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import ShoppingCategoryManager, {
@@ -13,12 +13,7 @@ import {
 } from "@/lib/ingredient-category";
 import IngredientAutocomplete from "@/app/components/IngredientAutocomplete";
 
-const DEFAULT_LOCATIONS = [
-  "Nevera",
-  "Armario",
-  "Congelador",
-  "Especias",
-];
+const DEFAULT_LOCATIONS = ["Nevera", "Armario", "Congelador", "Especias"];
 
 type PantryItem = {
   id: number;
@@ -75,7 +70,6 @@ function formatQuantity(item: PantryItem): string {
   return `${formatNumber(item.quantity)}${item.unit ? ` ${item.unit}` : ""}`;
 }
 
-// Devuelve un emoji según la categoría del ingrediente.
 function getCategoryIcon(category: string): string {
   const normalized = category
     .toLocaleLowerCase("es")
@@ -167,15 +161,113 @@ export default function PantrySection() {
   const [expiryDate, setExpiryDate] = useState("");
   const [useSoon, setUseSoon] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingInlineId, setEditingInlineId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
+  const [movingItemId, setMovingItemId] = useState<number | null>(null);
   const [shoppingActionId, setShoppingActionId] = useState<number | null>(null);
   const [shoppingMessage, setShoppingMessage] = useState("");
   const [itemToFinish, setItemToFinish] = useState<PantryItem | null>(null);
+
+  const [pressedItemId, setPressedItemId] = useState<number | null>(null);
+  const [contextMenuItem, setContextMenuItem] = useState<PantryItem | null>(
+    null
+  );
+
+  const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pressStartRef = useRef<{ x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const clearPressTimer = useCallback(() => {
+    if (pressTimerRef.current) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+  }, []);
+
+  const closeItemMenu = useCallback(() => {
+    clearPressTimer();
+    setContextMenuItem(null);
+    setPressedItemId(null);
+    pressStartRef.current = null;
+  }, [clearPressTimer]);
+
+  function startLongPress(
+    item: PantryItem,
+    event: React.PointerEvent<HTMLElement>
+  ) {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, summary, input, select, textarea")) return;
+
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+
+    clearPressTimer();
+    pressStartRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+
+    setPressedItemId(item.id);
+
+    pressTimerRef.current = setTimeout(() => {
+      setContextMenuItem(item);
+      setPressedItemId(null);
+      pressTimerRef.current = null;
+
+      if (
+        typeof navigator !== "undefined" &&
+        "vibrate" in navigator
+      ) {
+        navigator.vibrate(20);
+      }
+    }, 500);
+  }
+
+  function moveLongPress(event: React.PointerEvent<HTMLElement>) {
+    if (!pressStartRef.current) return;
+
+    const distance = Math.hypot(
+      event.clientX - pressStartRef.current.x,
+      event.clientY - pressStartRef.current.y
+    );
+
+    if (distance > 10) {
+      clearPressTimer();
+      setPressedItemId(null);
+      pressStartRef.current = null;
+    }
+  }
+
+  function endLongPress() {
+    clearPressTimer();
+    setPressedItemId(null);
+    pressStartRef.current = null;
+  }
+
+  useEffect(() => {
+    return () => clearPressTimer();
+  }, [clearPressTimer]);
+
+  useEffect(() => {
+    if (!contextMenuItem) return;
+
+    function handleOutsideClick(event: PointerEvent) {
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(event.target as Node)
+      ) {
+        closeItemMenu();
+      }
+    }
+
+    document.addEventListener("pointerdown", handleOutsideClick);
+    return () =>
+      document.removeEventListener("pointerdown", handleOutsideClick);
+  }, [contextMenuItem, closeItemMenu]);
 
   const loadItems = useCallback(async () => {
     setLoading(true);
@@ -193,12 +285,13 @@ export default function PantrySection() {
         return;
       }
 
-      const { data: savedCategories, error: categoriesError } = await supabase
-        .from("shopping_categories")
-        .select("id, name, sort_order")
-        .eq("user_id", user.id)
-        .order("sort_order", { ascending: true })
-        .order("name", { ascending: true });
+      const { data: savedCategories, error: categoriesError } =
+        await supabase
+          .from("shopping_categories")
+          .select("id, name, sort_order")
+          .eq("user_id", user.id)
+          .order("sort_order", { ascending: true })
+          .order("name", { ascending: true });
 
       if (categoriesError) throw categoriesError;
 
@@ -224,10 +317,11 @@ export default function PantrySection() {
 
       setCategories(categoryRows);
 
-      const { data: assignmentRows, error: assignmentsError } = await supabase
-        .from("ingredient_category_assignments")
-        .select("ingredient_id, category_id")
-        .eq("user_id", user.id);
+      const { data: assignmentRows, error: assignmentsError } =
+        await supabase
+          .from("ingredient_category_assignments")
+          .select("ingredient_id, category_id")
+          .eq("user_id", user.id);
 
       if (assignmentsError) throw assignmentsError;
 
@@ -237,7 +331,10 @@ export default function PantrySection() {
       });
 
       const categoryNameById = new Map(
-        categoryRows.map((category) => [Number(category.id), category.name])
+        categoryRows.map((category) => [
+          Number(category.id),
+          category.name,
+        ])
       );
 
       const { data: pantryData, error: pantryError } = await supabase
@@ -254,6 +351,7 @@ export default function PantrySection() {
       const ingredientIds = [
         ...new Set(rows.map((row) => row.ingredient_id)),
       ];
+
       let ingredientMap = new Map<number, string>();
 
       if (ingredientIds.length > 0) {
@@ -263,6 +361,7 @@ export default function PantrySection() {
           .in("id", ingredientIds);
 
         if (error) throw error;
+
         ingredientMap = new Map(
           (data || []).map((ingredient) => [
             Number(ingredient.id),
@@ -275,6 +374,7 @@ export default function PantrySection() {
         rows.map((row) => {
           const ingredientName =
             ingredientMap.get(Number(row.ingredient_id)) || "Ingrediente";
+
           const assignedCategory = categoryNameById.get(
             assignments[Number(row.ingredient_id)]
           );
@@ -313,6 +413,7 @@ export default function PantrySection() {
       data: { user },
       error: userError,
     } = await supabase.auth.getUser();
+
     if (userError) throw userError;
     if (!user) throw new Error("No hay una sesión activa.");
 
@@ -327,6 +428,7 @@ export default function PantrySection() {
       .single();
 
     if (error) throw error;
+
     setCategories((current) =>
       [...current, data as ShoppingCategory].sort(
         (a, b) => a.sort_order - b.sort_order
@@ -336,10 +438,12 @@ export default function PantrySection() {
 
   async function renameCategory(id: number, name: string) {
     const oldName = categories.find((category) => category.id === id)?.name;
+
     const {
       data: { user },
       error: userError,
     } = await supabase.auth.getUser();
+
     if (userError) throw userError;
     if (!user) throw new Error("No hay una sesión activa.");
 
@@ -352,6 +456,7 @@ export default function PantrySection() {
       .single();
 
     if (error) throw error;
+
     setCategories((current) =>
       current.map((category) =>
         category.id === id ? (data as ShoppingCategory) : category
@@ -361,7 +466,9 @@ export default function PantrySection() {
     if (oldName) {
       setItems((current) =>
         current.map((item) =>
-          item.category === oldName ? { ...item, category: name.trim() } : item
+          item.category === oldName
+            ? { ...item, category: name.trim() }
+            : item
         )
       );
     }
@@ -372,6 +479,7 @@ export default function PantrySection() {
       data: { user },
       error: userError,
     } = await supabase.auth.getUser();
+
     if (userError) throw userError;
     if (!user) throw new Error("No hay una sesión activa.");
 
@@ -394,6 +502,7 @@ export default function PantrySection() {
     );
 
     const failed = results.find((result) => result.error);
+
     if (failed?.error) {
       setCategories(previous);
       throw failed.error;
@@ -405,6 +514,7 @@ export default function PantrySection() {
       data: { user },
       error: userError,
     } = await supabase.auth.getUser();
+
     if (userError) throw userError;
     if (!user) throw new Error("No hay una sesión activa.");
 
@@ -415,9 +525,11 @@ export default function PantrySection() {
       .eq("user_id", user.id);
 
     if (error) throw error;
+
     setCategories((current) =>
       current.filter((category) => category.id !== id)
     );
+
     await loadItems();
   }
 
@@ -426,6 +538,7 @@ export default function PantrySection() {
       data: { user },
       error: userError,
     } = await supabase.auth.getUser();
+
     if (userError) throw userError;
     if (!user) return;
 
@@ -446,7 +559,10 @@ export default function PantrySection() {
       return;
     }
 
-    const selected = categories.find((category) => category.id === categoryId);
+    const selected = categories.find(
+      (category) => category.id === categoryId
+    );
+
     if (!selected) return;
 
     setItems((current) =>
@@ -492,6 +608,7 @@ export default function PantrySection() {
       } = await supabase.auth.getUser();
 
       if (userError) throw userError;
+
       if (!user) {
         router.replace("/login");
         return;
@@ -533,11 +650,13 @@ export default function PantrySection() {
     setExpiryDate("");
     setUseSoon(false);
     setEditingId(null);
+    setEditingInlineId(null);
     setShowForm(false);
   }
 
   async function findOrCreateIngredient(ingredientName: string) {
     const cleanName = ingredientName.trim();
+
     const { data: existing, error: searchError } = await supabase
       .from("ingredients")
       .select("id")
@@ -555,6 +674,7 @@ export default function PantrySection() {
       .single();
 
     if (createError) throw createError;
+
     return Number(created.id);
   }
 
@@ -595,7 +715,9 @@ export default function PantrySection() {
         data: { user },
         error: userError,
       } = await supabase.auth.getUser();
+
       if (userError) throw userError;
+
       if (!user) {
         router.replace("/login");
         return;
@@ -603,6 +725,7 @@ export default function PantrySection() {
 
       const ingredientId = await findOrCreateIngredient(cleanName);
       const normalizedUnit = normalizeUnit(unit);
+
       const conservation = {
         is_opened: isOpened,
         opened_at: isOpened ? openedAt || null : null,
@@ -690,7 +813,10 @@ export default function PantrySection() {
   }
 
   function startEditing(item: PantryItem) {
+    closeItemMenu();
+
     setEditingId(item.id);
+    setEditingInlineId(item.id);
     setName(item.name);
     setQuantity(item.quantity === null ? "" : String(item.quantity));
     setUnit(item.unit || "");
@@ -700,15 +826,67 @@ export default function PantrySection() {
     setExpiryDate(item.expiryDate);
     setUseSoon(item.useSoon);
     setErrorMessage("");
-    setShowForm(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setShowForm(false);
+  }
+
+  async function changeItemLocation(item: PantryItem, nextLocation: string) {
+    if (item.location === nextLocation || movingItemId !== null) {
+      closeItemMenu();
+      return;
+    }
+
+    setMovingItemId(item.id);
+    setErrorMessage("");
+
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError) throw userError;
+
+      if (!user) {
+        router.replace("/login");
+        return;
+      }
+
+      const { error } = await supabase
+        .from("pantry")
+        .update({ location: nextLocation })
+        .eq("id", item.id)
+        .eq("user_id", user.id);
+
+      if (error) throw error;
+
+      setItems((current) =>
+        current.map((entry) =>
+          entry.id === item.id
+            ? { ...entry, location: nextLocation }
+            : entry
+        )
+      );
+
+      setShoppingMessage(`${item.name} se ha movido a ${nextLocation}.`);
+      closeItemMenu();
+    } catch (error) {
+      console.error("Error cambiando ubicación:", error);
+      setErrorMessage(
+        "No se ha podido cambiar la ubicación del ingrediente."
+      );
+    } finally {
+      setMovingItemId(null);
+    }
   }
 
   async function removeItem(item: PantryItem) {
+    closeItemMenu();
+
     if (!window.confirm(`¿Quieres eliminar ${item.name} de tu almacén?`))
       return;
 
     setErrorMessage("");
+
     const {
       data: { user },
       error: userError,
@@ -718,6 +896,7 @@ export default function PantrySection() {
       setErrorMessage("No hemos podido comprobar tu sesión.");
       return;
     }
+
     if (!user) {
       router.replace("/login");
       return;
@@ -736,11 +915,13 @@ export default function PantrySection() {
     }
 
     if (editingId === item.id) resetForm();
+
     await loadItems();
   }
 
   async function finishPantryItem(addToShoppingList: boolean) {
     const item = itemToFinish;
+
     if (!item || shoppingActionId === item.id) return;
 
     setShoppingActionId(item.id);
@@ -803,11 +984,15 @@ export default function PantrySection() {
 
       if (deleteError) throw deleteError;
 
-      setItems((current) => current.filter((entry) => entry.id !== item.id));
+      setItems((current) =>
+        current.filter((entry) => entry.id !== item.id)
+      );
 
       if (editingId === item.id) resetForm();
 
+      closeItemMenu();
       setItemToFinish(null);
+
       setShoppingMessage(
         addToShoppingList
           ? `${item.name} se ha añadido a la compra y se ha quitado del almacén.`
@@ -823,6 +1008,193 @@ export default function PantrySection() {
     } finally {
       setShoppingActionId(null);
     }
+  }
+
+  // Formulario compartido para añadir y editar ingredientes.
+  function renderPantryForm(inline = false) {
+    return (
+      <div
+        id={inline ? `pantry-edit-${editingId}` : "pantry-item-form"}
+        className={`rounded-2xl bg-white p-3 shadow-sm ${
+          inline ? "mt-2 border border-[#E5E8DF]" : "mt-2"
+        }`}
+      >
+        <div className="mb-3">
+          <h2 className="text-sm font-semibold">
+            {editingId !== null ? "Editar ingrediente" : "Nuevo ingrediente"}
+          </h2>
+          <p className="mt-0.5 text-[11px] text-[#92958B]">
+            Añade los datos que necesites para controlar lo que tienes en casa.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-2">
+          <label className="min-w-0 block text-xs font-medium text-[#788675]">
+            Ingrediente
+            <IngredientAutocomplete
+              value={name}
+              onChange={setName}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void saveItem();
+                }
+              }}
+              placeholder="Ej. Arroz"
+              className={`${inputClass} mt-1 px-2.5 py-2 text-sm`}
+            />
+          </label>
+
+          <label className="min-w-0 block text-xs font-medium text-[#788675]">
+            Ubicación
+            <select
+              value={location}
+              onChange={(event) => setLocation(event.target.value)}
+              className={`${inputClass} mt-1 px-2 py-2 text-sm`}
+            >
+              {locations.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="mt-3 rounded-xl border border-[#E5E8DF] bg-[#FBFAF7] p-2.5">
+          <div className="mb-2">
+            <h3 className="text-xs font-semibold text-[#52685A]">
+              Conservación y fechas
+            </h3>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg bg-white px-2.5 py-2">
+              <input
+                type="checkbox"
+                checked={isOpened}
+                onChange={(event) => {
+                  setIsOpened(event.target.checked);
+                  if (!event.target.checked) setOpenedAt("");
+                }}
+                className="h-4 w-4 shrink-0 accent-[#52685A]"
+              />
+              <span className="text-xs font-medium leading-tight text-[#30352C]">
+                Producto abierto
+              </span>
+            </label>
+
+            <label className="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg bg-white px-2.5 py-2">
+              <input
+                type="checkbox"
+                checked={useSoon}
+                onChange={(event) => setUseSoon(event.target.checked)}
+                className="h-4 w-4 shrink-0 accent-[#52685A]"
+              />
+              <span className="text-xs font-medium leading-tight text-[#30352C]">
+                Gastar pronto
+              </span>
+            </label>
+          </div>
+
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <label className="min-w-0 block text-[11px] font-medium text-[#788675]">
+              Fecha de apertura
+              <input
+                type="date"
+                value={openedAt}
+                disabled={!isOpened}
+                onChange={(event) => setOpenedAt(event.target.value)}
+                className={`${inputClass} mt-1 px-2 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40`}
+              />
+            </label>
+
+            <label className="min-w-0 block text-[11px] font-medium text-[#788675]">
+              Fecha de caducidad
+              <input
+                type="date"
+                value={expiryDate}
+                onChange={(event) => setExpiryDate(event.target.value)}
+                className={`${inputClass} mt-1 px-2 py-2 text-xs`}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="mt-3 rounded-xl bg-[#F8F7F3] px-2.5 py-2">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium text-[#92958B]">
+              Cantidad y unidad
+            </p>
+            <span className="text-[10px] text-[#B2B4AC]">Opcional</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className="min-w-0 text-[11px] text-[#92958B]">
+              Cantidad
+              <input
+                value={quantity}
+                onChange={(event) => setQuantity(event.target.value)}
+                inputMode="decimal"
+                placeholder="Ej. 500"
+                className="mt-1 w-full rounded-lg border border-[#E8E6DE] bg-white px-2.5 py-1.5 text-sm text-[#52685A] outline-none placeholder:text-[#B2B4AC] focus:border-[#A9B9A6]"
+              />
+            </label>
+
+            <label className="min-w-0 text-[11px] text-[#92958B]">
+              Unidad
+              <input
+                value={unit}
+                onChange={(event) => setUnit(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void saveItem();
+                  }
+                }}
+                placeholder="g, kg, ml…"
+                className="mt-1 w-full rounded-lg border border-[#E8E6DE] bg-white px-2.5 py-1.5 text-sm text-[#52685A] outline-none placeholder:text-[#B2B4AC] focus:border-[#A9B9A6]"
+              />
+            </label>
+          </div>
+        </div>
+
+        {errorMessage && (
+          <p
+            role="alert"
+            className="mt-2 rounded-xl bg-[#FBF0EC] px-3 py-2 text-xs text-[#955F53]"
+          >
+            {errorMessage}
+          </p>
+        )}
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void saveItem()}
+            disabled={saving || !name.trim()}
+            className="rounded-xl bg-[#52685A] px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-[#405547] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving
+              ? "Guardando…"
+              : editingId !== null
+                ? "Guardar cambios"
+                : "Añadir al almacén"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              resetForm();
+              setErrorMessage("");
+            }}
+            className="rounded-xl bg-[#F1EFE8] px-3.5 py-2 text-xs text-[#52685A] hover:bg-[#E8E5DC]"
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const filteredItems = items
@@ -841,6 +1213,7 @@ export default function PantrySection() {
       if (a.expiryDate) return -1;
       if (b.expiryDate) return 1;
       if (a.useSoon !== b.useSoon) return a.useSoon ? -1 : 1;
+
       return a.name.localeCompare(b.name, "es");
     });
 
@@ -858,9 +1231,11 @@ export default function PantrySection() {
           <p className="text-xs font-medium tracking-wide text-[#788675]">
             TU COCINA, BAJO CONTROL
           </p>
+
           <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">
             Mi almacén
           </h1>
+
           <p className="mt-1 max-w-xl text-sm text-[#788675]">
             Lo que tienes en casa, organizado para comprar solo lo necesario.
           </p>
@@ -889,7 +1264,7 @@ export default function PantrySection() {
                 resetForm();
                 setErrorMessage("");
               } else {
-                setEditingId(null);
+                resetForm();
                 setLocation("Nevera");
                 setErrorMessage("");
                 setShowForm(true);
@@ -905,7 +1280,7 @@ export default function PantrySection() {
               </span>
               <span>
                 <span className="block text-sm font-semibold">
-                  {editingId !== null ? "Editar ingrediente" : "Añadir ingrediente"}
+                  Añadir ingrediente
                 </span>
                 <span className="mt-0.5 block text-xs text-[#788675]">
                   {showForm
@@ -919,176 +1294,14 @@ export default function PantrySection() {
             </span>
           </button>
 
-          {showForm && (
-            <div
-              id="pantry-item-form"
-              className="mt-2 rounded-2xl bg-white p-4 shadow-sm"
-            >
-              <div className="mb-3">
-                <h2 className="font-semibold">
-                  {editingId !== null ? "Editar ingrediente" : "Nuevo ingrediente"}
-                </h2>
-                <p className="mt-0.5 text-xs text-[#788675]">
-                  Las cantidades, fechas y prioridades son opcionales.
-                </p>
-              </div>
-
-              <div className="grid gap-2.5 sm:grid-cols-2">
-                <label className="text-sm font-medium">
-                  Ingrediente
-                  <IngredientAutocomplete
-                    value={name}
-                    onChange={setName}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        void saveItem();
-                      }
-                    }}
-                    placeholder="Ej. Arroz"
-                    className={`${inputClass} mt-1`}
-                  />
-                </label>
-
-                <label className="text-sm font-medium">
-                  Ubicación
-                  <select
-                    value={location}
-                    onChange={(event) => setLocation(event.target.value)}
-                    className={`${inputClass} mt-1`}
-                  >
-                    {locations.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <div className="grid grid-cols-2 gap-2 sm:col-span-2">
-                  <label className="text-sm font-medium">
-                    Cantidad{" "}
-                    <span className="font-normal text-[#9A9E94]">(opcional)</span>
-                    <input
-                      value={quantity}
-                      onChange={(event) => setQuantity(event.target.value)}
-                      inputMode="decimal"
-                      placeholder="Ej. 500"
-                      className={`${inputClass} mt-1`}
-                    />
-                  </label>
-                  <label className="text-sm font-medium">
-                    Unidad{" "}
-                    <span className="font-normal text-[#9A9E94]">(opcional)</span>
-                    <input
-                      value={unit}
-                      onChange={(event) => setUnit(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void saveItem();
-                        }
-                      }}
-                      placeholder="g, kg, ml…"
-                      className={`${inputClass} mt-1`}
-                    />
-                  </label>
-                </div>
-              </div>
-
-              <details className="mt-3 rounded-xl bg-[#F7F5EF] px-3 py-2">
-                <summary className="cursor-pointer text-sm font-medium text-[#52685A]">
-                  Conservación y fechas
-                </summary>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <label className="flex cursor-pointer items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={isOpened}
-                      onChange={(event) => {
-                        setIsOpened(event.target.checked);
-                        if (!event.target.checked) setOpenedAt("");
-                      }}
-                      className="h-4 w-4 accent-[#52685A]"
-                    />
-                    Producto abierto
-                  </label>
-
-                  <label className="flex cursor-pointer items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={useSoon}
-                      onChange={(event) => setUseSoon(event.target.checked)}
-                      className="h-4 w-4 accent-[#52685A]"
-                    />
-                    Hay que gastarlo pronto
-                  </label>
-
-                  <label className="text-sm font-medium">
-                    Fecha de apertura
-                    <input
-                      type="date"
-                      value={openedAt}
-                      onChange={(event) => setOpenedAt(event.target.value)}
-                      disabled={!isOpened}
-                      className={`${inputClass} mt-1 disabled:opacity-50`}
-                    />
-                  </label>
-
-                  <label className="text-sm font-medium">
-                    Fecha de caducidad
-                    <input
-                      type="date"
-                      value={expiryDate}
-                      onChange={(event) => setExpiryDate(event.target.value)}
-                      className={`${inputClass} mt-1`}
-                    />
-                  </label>
-                </div>
-              </details>
-
-              {errorMessage && (
-                <p
-                  role="alert"
-                  className="mt-3 rounded-xl bg-[#FBF0EC] px-3 py-2 text-sm text-[#955F53]"
-                >
-                  {errorMessage}
-                </p>
-              )}
-
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => void saveItem()}
-                  disabled={saving || !name.trim()}
-                  className="rounded-xl bg-[#52685A] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#405547] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {saving
-                    ? "Guardando…"
-                    : editingId !== null
-                      ? "Guardar cambios"
-                      : "Añadir al almacén"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    resetForm();
-                    setErrorMessage("");
-                  }}
-                  className="rounded-xl bg-[#F1EFE8] px-4 py-2.5 text-sm text-[#52685A] hover:bg-[#E8E5DC]"
-                >
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          )}
+          {showForm && renderPantryForm()}
         </section>
 
         <details className="mb-4 rounded-xl px-1 py-1">
           <summary className="cursor-pointer text-xs font-medium text-[#92958B] hover:text-[#52685A]">
             ⚙️ Organizar categorías
           </summary>
+
           <div className="mt-3">
             <ShoppingCategoryManager
               categories={categories}
@@ -1108,6 +1321,7 @@ export default function PantrySection() {
                 Tus alimentos, agrupados por ubicación.
               </p>
             </div>
+
             <span className="rounded-full bg-[#E8E9E0] px-2.5 py-1 text-xs font-semibold text-[#52685A]">
               {filteredItems.length}
             </span>
@@ -1182,6 +1396,7 @@ export default function PantrySection() {
                           {savedLocation}
                         </span>
                       </span>
+
                       <span className="rounded-full bg-[#F0F2EB] px-2 py-0.5 text-[11px] font-semibold text-[#52685A]">
                         {locationItems.length}
                       </span>
@@ -1191,95 +1406,184 @@ export default function PantrySection() {
                       {locationItems.map((item) => {
                         const expiryInfo = getExpiryInfo(item.expiryDate);
                         const updating = updatingItemId === item.id;
+                        const pressed = pressedItemId === item.id;
+                        const menuOpen = contextMenuItem?.id === item.id;
+                        const inlineEditing = editingInlineId === item.id;
 
                         return (
                           <article
                             key={item.id}
-                            className="flex items-start gap-2 py-2.5 first:pt-2 last:pb-1"
+                            onPointerDown={(event) =>
+                              startLongPress(item, event)
+                            }
+                            onPointerMove={moveLongPress}
+                            onPointerUp={endLongPress}
+                            onPointerCancel={endLongPress}
+                            onPointerLeave={endLongPress}
+                            onContextMenu={(event) => {
+                              event.preventDefault();
+                              closeItemMenu();
+                              setContextMenuItem(item);
+                            }}
+                            style={{ touchAction: "pan-y" }}
+                            className={`relative -mx-2 rounded-xl px-2 py-2.5 transition-colors duration-200 ${
+                              pressed
+                                ? "bg-[#26352D]/15"
+                                : "bg-transparent"
+                            }`}
                           >
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                                <span
-                                  className="text-base leading-none"
-                                  aria-hidden="true"
-                                >
-                                  {getCategoryIcon(item.category)}
-                                </span>
-                                <h3 className="text-sm font-semibold">
-                                  {item.name}
-                                </h3>
-                                {formatQuantity(item) && (
-                                  <span className="text-xs text-[#92958B]">
-                                    {formatQuantity(item)}
-                                  </span>
-                                )}
-                              </div>
-
-                              <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                {item.isOpened && (
-                                  <span className="rounded-md bg-[#F8EBDD] px-2 py-0.5 text-[10px] font-medium text-[#916B43]">
-                                    Abierto
-                                  </span>
-                                )}
-
-                                {item.useSoon && (
-                                  <span className="rounded-md bg-[#FBF0EC] px-2 py-0.5 text-[10px] font-medium text-[#A16E63]">
-                                    Gastar pronto
-                                  </span>
-                                )}
-
-                                {expiryInfo && (
+                            <div className="flex items-start gap-2">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                                   <span
-                                    className={`rounded-md px-2 py-0.5 text-[10px] font-medium ${expiryInfo.className}`}
+                                    className="text-base leading-none"
+                                    aria-hidden="true"
                                   >
-                                    {expiryInfo.label}
+                                    {getCategoryIcon(item.category)}
                                   </span>
-                                )}
 
-                                {updating && (
-                                  <span className="text-[10px] text-[#788675]">
-                                    Guardando…
-                                  </span>
-                                )}
+                                  <h3 className="text-sm font-semibold">
+                                    {item.name}
+                                  </h3>
+
+                                  {formatQuantity(item) && (
+                                    <span className="text-xs text-[#92958B]">
+                                      {formatQuantity(item)}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                  {item.isOpened && (
+                                    <span className="rounded-md bg-[#F8EBDD] px-2 py-0.5 text-[10px] font-medium text-[#916B43]">
+                                      Abierto
+                                    </span>
+                                  )}
+
+                                  {item.useSoon && (
+                                    <span className="rounded-md bg-[#FBF0EC] px-2 py-0.5 text-[10px] font-medium text-[#A16E63]">
+                                      Gastar pronto
+                                    </span>
+                                  )}
+
+                                  {expiryInfo && (
+                                    <span
+                                      className={`rounded-md px-2 py-0.5 text-[10px] font-medium ${expiryInfo.className}`}
+                                    >
+                                      {expiryInfo.label}
+                                    </span>
+                                  )}
+
+                                  {updating && (
+                                    <span className="text-[10px] text-[#788675]">
+                                      Guardando…
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                            </div>
 
-                            <details className="relative shrink-0">
-                              <summary
+                              <button
+                                type="button"
                                 aria-label={`Opciones de ${item.name}`}
-                                className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg text-lg leading-none text-[#788675] hover:bg-[#F0F2EB] [&::-webkit-details-marker]:hidden"
+                                aria-expanded={menuOpen}
+                                onClick={() => {
+                                  if (menuOpen) {
+                                    closeItemMenu();
+                                  } else {
+                                    closeItemMenu();
+                                    setContextMenuItem(item);
+                                  }
+                                }}
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-lg leading-none text-[#788675] hover:bg-[#F0F2EB]"
                               >
                                 ···
-                              </summary>
-                              <div className="absolute right-0 top-9 z-20 w-48 rounded-xl border border-[#E9E6DE] bg-white p-1.5 shadow-lg">
-                                <button
-                                  type="button"
-                                  onClick={() => startEditing(item)}
-                                  className="w-full rounded-lg px-3 py-2 text-left text-xs text-[#52685A] hover:bg-[#F0F2EB]"
-                                >
-                                  Editar ingrediente
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setItemToFinish(item);
-                                    setShoppingMessage("");
-                                    setErrorMessage("");
-                                  }}
-                                  disabled={shoppingActionId === item.id}
-                                  className="w-full rounded-lg px-3 py-2 text-left text-xs text-[#52685A] hover:bg-[#F0F2EB] disabled:opacity-50"
-                                >
-                                  Se me ha acabado
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void removeItem(item)}
-                                  className="w-full rounded-lg px-3 py-2 text-left text-xs text-[#A16E63] hover:bg-[#FBF0EC]"
-                                >
-                                  Eliminar
-                                </button>
+                              </button>
+                            </div>
+
+                            {menuOpen && (
+                              <div
+                                ref={menuRef}
+                                className="relative z-30 mt-2 rounded-xl border border-[#E9E6DE] bg-[#FBFAF7] p-3 shadow-md"
+                              >
+                                <div className="mb-2 flex items-center justify-between">
+                                  <p className="text-xs font-semibold text-[#52685A]">
+                                    Mover a…
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={closeItemMenu}
+                                    aria-label="Cerrar menú"
+                                    className="flex h-7 w-7 items-center justify-center rounded-lg text-[#92958B] hover:bg-[#EEECE5]"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                  {locations.map((option) => (
+                                    <button
+                                      key={option}
+                                      type="button"
+                                      disabled={
+                                        movingItemId === item.id ||
+                                        item.location === option
+                                      }
+                                      onClick={() =>
+                                        void changeItemLocation(item, option)
+                                      }
+                                      className={`rounded-lg border px-3 py-2 text-left text-xs font-medium transition ${
+                                        item.location === option
+                                          ? "border-[#A9B9A6] bg-[#DDE8DF] text-[#405547]"
+                                          : "border-[#E9E6DE] bg-white text-[#52685A] hover:bg-[#F0F2EB]"
+                                      } disabled:cursor-default disabled:opacity-70`}
+                                    >
+                                      {item.location === option ? "✓ " : ""}
+                                      {option}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                {movingItemId === item.id && (
+                                  <p className="mt-2 text-xs text-[#788675]">
+                                    Cambiando ubicación…
+                                  </p>
+                                )}
+
+                                <div className="mt-3 border-t border-[#E9E6DE] pt-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditing(item)}
+                                    className="w-full rounded-lg px-3 py-2.5 text-left text-xs font-medium text-[#52685A] hover:bg-white"
+                                  >
+                                    ✏️ Editar ingrediente
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      closeItemMenu();
+                                      setItemToFinish(item);
+                                      setShoppingMessage("");
+                                      setErrorMessage("");
+                                    }}
+                                    disabled={shoppingActionId === item.id}
+                                    className="w-full rounded-lg px-3 py-2.5 text-left text-xs font-medium text-[#52685A] hover:bg-white disabled:opacity-50"
+                                  >
+                                    🛒 Se me ha acabado
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => void removeItem(item)}
+                                    className="w-full rounded-lg px-3 py-2.5 text-left text-xs font-medium text-[#A16E63] hover:bg-[#FBF0EC]"
+                                  >
+                                    🗑️ Eliminar
+                                  </button>
+                                </div>
                               </div>
-                            </details>
+                            )}
+
+                            {inlineEditing && renderPantryForm(true)}
                           </article>
                         );
                       })}
@@ -1297,7 +1601,10 @@ export default function PantrySection() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-[#26352D]/35 px-4 py-6"
           role="presentation"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !shoppingActionId) {
+            if (
+              event.target === event.currentTarget &&
+              !shoppingActionId
+            ) {
               setItemToFinish(null);
             }
           }}
@@ -1311,12 +1618,14 @@ export default function PantrySection() {
             <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-[#DDE8DF] text-xl">
               🛒
             </div>
+
             <h2
               id="finish-pantry-title"
               className="text-lg font-semibold text-[#26352D]"
             >
               ¿Se te ha acabado {itemToFinish.name}?
             </h2>
+
             <p className="mt-2 text-sm leading-relaxed text-[#788675]">
               ¿Quieres añadirlo también a la lista de la compra? En cualquier
               caso, desaparecerá de tu almacén.
@@ -1342,6 +1651,7 @@ export default function PantrySection() {
                   ? "Guardando…"
                   : "Sí, añadir a la compra"}
               </button>
+
               <button
                 type="button"
                 onClick={() => void finishPantryItem(false)}
@@ -1350,6 +1660,7 @@ export default function PantrySection() {
               >
                 No, solo quitar del almacén
               </button>
+
               <button
                 type="button"
                 onClick={() => setItemToFinish(null)}

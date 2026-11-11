@@ -1,6 +1,13 @@
+
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import Link from "next/link";
 import ShoppingCategoryManager, {
   type ShoppingCategory,
@@ -55,6 +62,7 @@ type PantryItem = {
   name: string;
   quantity: number | null;
   unit: string | null;
+  location: string | null;
 };
 
 type StoredShoppingRow = {
@@ -71,18 +79,38 @@ type RelationRow = {
   recipe_id: number;
 };
 
+const PANTRY_LOCATIONS = [
+  "Nevera",
+  "Armario",
+  "Congelador",
+  "Especias",
+] as const;
+
+const PANTRY_LOCATION_STORAGE_KEY = "mi-cocina-ingredient-locations";
+
+type PantryLocation = (typeof PANTRY_LOCATIONS)[number];
+
+function isPantryLocation(value: unknown): value is PantryLocation {
+  return (
+    typeof value === "string" &&
+    PANTRY_LOCATIONS.includes(value as PantryLocation)
+  );
+}
+
 function normalizeUnit(unit: string | null): string | null {
   if (!unit) return null;
 
   const value = unit.toLowerCase().trim();
 
   if (["g", "gr", "gramo", "gramos"].includes(value)) return "g";
-  if (["kg", "kilo", "kilos", "kilogramo", "kilogramos"].includes(value)) return "kg";
+  if (["kg", "kilo", "kilos", "kilogramo", "kilogramos"].includes(value))
+    return "kg";
   if (["ml", "mililitro", "mililitros"].includes(value)) return "ml";
   if (["l", "litro", "litros"].includes(value)) return "l";
   if (["cl", "centilitro", "centilitros"].includes(value)) return "cl";
   if (["unidad", "unidades", "ud", "uds"].includes(value)) return "unidad";
-  if (["cucharadita", "cucharaditas"].includes(value)) return "cucharadita";
+  if (["cucharadita", "cucharaditas"].includes(value))
+    return "cucharadita";
   if (["cucharada", "cucharadas"].includes(value)) return "cucharada";
   if (["taza", "tazas"].includes(value)) return "taza";
   if (["vaso", "vasos"].includes(value)) return "vaso";
@@ -242,12 +270,75 @@ export default function ShoppingPage() {
   const [addingManual, setAddingManual] = useState(false);
   const [isAddFormOpen, setIsAddFormOpen] = useState(false);
 
-  const [activeSection, setActiveSection] = useState<"lista" | "almacen" | "ingredientes">("lista");
+  const [activeSection, setActiveSection] = useState<
+    "lista" | "almacen" | "ingredientes"
+  >("lista");
   const [activeList, setActiveList] = useState<"recipe" | "manual">("manual");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
-  const [pantryActionId, setPantryActionId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState("");
+
+  const [contextMenuItem, setContextMenuItem] =
+    useState<ShoppingItem | null>(null);
+  const [pressedItemId, setPressedItemId] = useState<string | null>(null);
+
+  // La ubicación se recuerda por ingrediente, no por fila de compra.
+  const [pantryDestinations, setPantryDestinations] = useState<
+    Record<string, PantryLocation>
+  >({});
+
+  const [addingPurchased, setAddingPurchased] = useState(false);
+
+  const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pressStartRef = useRef<{ x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(PANTRY_LOCATION_STORAGE_KEY);
+
+      if (!saved) return;
+
+      const parsed: unknown = JSON.parse(saved);
+
+      if (!parsed || typeof parsed !== "object") return;
+
+      const validLocations: Record<string, PantryLocation> = {};
+
+      Object.entries(parsed).forEach(([ingredientId, location]) => {
+        if (isPantryLocation(location)) {
+          validLocations[ingredientId] = location;
+        }
+      });
+
+      setPantryDestinations(validLocations);
+    } catch (error) {
+      console.error("No se han podido recuperar las ubicaciones guardadas:", error);
+    }
+  }, []);
+
+  function changePantryDestination(
+    ingredientId: number,
+    location: PantryLocation
+  ) {
+    setPantryDestinations((current) => {
+      const updated = {
+        ...current,
+        [String(ingredientId)]: location,
+      };
+
+      try {
+        localStorage.setItem(
+          PANTRY_LOCATION_STORAGE_KEY,
+          JSON.stringify(updated)
+        );
+      } catch (error) {
+        console.error("No se ha podido guardar la ubicación:", error);
+      }
+
+      return updated;
+    });
+  }
 
   async function loadData() {
     setLoading(true);
@@ -468,7 +559,7 @@ export default function ShoppingPage() {
 
       const { data: pantryData, error: pantryError } = await supabase
         .from("pantry")
-        .select("id, ingredient_id, quantity, unit")
+        .select("id, ingredient_id, quantity, unit, location")
         .eq("user_id", user.id);
 
       if (pantryError) throw pantryError;
@@ -510,6 +601,7 @@ export default function ShoppingPage() {
         name: pantryNameMap.get(Number(item.ingredient_id)) || "Ingrediente",
         quantity: item.quantity !== null ? Number(item.quantity) : null,
         unit: normalizeUnit(item.unit),
+        location: item.location ?? null,
       }));
 
       setPantryItems(loadedPantry);
@@ -647,7 +739,8 @@ export default function ShoppingPage() {
         }
 
         finalRecipeShoppingItems.push({
-          ...item,id: String(shoppingId),
+          ...item,
+          id: String(shoppingId),
         });
       }
 
@@ -826,6 +919,33 @@ export default function ShoppingPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!contextMenuItem) return;
+
+    function handleOutsidePointerDown(event: PointerEvent) {
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(event.target as Node)
+      ) {
+        setContextMenuItem(null);
+      }
+    }
+
+    document.addEventListener("pointerdown", handleOutsidePointerDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handleOutsidePointerDown);
+    };
+  }, [contextMenuItem]);
+
+  useEffect(() => {
+    return () => {
+      if (pressTimerRef.current) {
+        clearTimeout(pressTimerRef.current);
+      }
+    };
+  }, []);
+
   async function toggleItem(id: string) {
     const numericId = Number(id);
     const currentChecked = checkedItems.includes(id);
@@ -853,11 +973,21 @@ export default function ShoppingPage() {
     }
   }
 
-  async function addPurchasedItemToPantry(item: ShoppingItem) {
-    if (pantryActionId === item.id) return;
+  async function addPurchasedItemsToPantry() {
+    if (addingPurchased) return;
 
-    setPantryActionId(item.id);
+    const purchasedItems = displayedItems.filter((item) =>
+      checkedItems.includes(item.id)
+    );
+
+    if (purchasedItems.length === 0) return;
+
+    setAddingPurchased(true);
     setActionMessage("");
+    setErrorMessage("");
+
+    const successfulIds: string[] = [];
+    const failedNames: string[] = [];
 
     try {
       const {
@@ -872,167 +1002,144 @@ export default function ShoppingPage() {
         return;
       }
 
-      const { data: existing, error: pantryError } = await supabase
-        .from("pantry")
-        .select("id, quantity, unit")
-        .eq("user_id", user.id)
-        .eq("ingredient_id", item.ingredientId)
-        .maybeSingle();
+      for (const item of purchasedItems) {
+        try {
+          const quantityToAdd = item.quantity ?? item.totalQuantity ?? null;
+          const unitToAdd = normalizeUnit(item.unit);
+          const shoppingId = Number(item.id);
 
-      if (pantryError) throw pantryError;
+          // Cada ingrediente utiliza su propia ubicación recordada.
+          const destination =
+            pantryDestinations[String(item.ingredientId)] || "Nevera";
 
-      const quantityToAdd = item.quantity ?? item.totalQuantity ?? null;
-      const unitToAdd = normalizeUnit(item.unit);
+          const { data: existing, error: pantryError } = await supabase
+            .from("pantry")
+            .select("id, quantity, unit")
+            .eq("user_id", user.id)
+            .eq("ingredient_id", item.ingredientId)
+            .eq("location", destination)
+            .maybeSingle();
 
-      if (existing) {
-        if (
-          existing.quantity !== null &&
-          quantityToAdd !== null &&
-          !unitsAreCompatible(existing.unit, unitToAdd)
-        ) {
-          setActionMessage(
-            `${item.name} ya está en el almacén con otra unidad. No he cambiado las existencias para evitar mezclar cantidades incompatibles.`
-          );
-          return;
-        }
+          if (pantryError) throw pantryError;
 
-        let mergedQuantity: number | null = existing.quantity;
-        const mergedUnit = normalizeUnit(existing.unit);
+          if (existing) {
+            let mergedQuantity: number | null = existing.quantity;
+            let mergedUnit = normalizeUnit(existing.unit);
 
-        if (existing.quantity === null) {
-          mergedQuantity = quantityToAdd;
-        } else if (quantityToAdd !== null) {
-          const existingBase = convertToBaseQuantity(
-            existing.quantity,
-            existing.unit
-          );
-          const addedBase = convertToBaseQuantity(
-            quantityToAdd,
-            unitToAdd
-          );
+            if (existing.quantity === null) {
+              mergedQuantity = quantityToAdd;
+              mergedUnit = unitToAdd ?? mergedUnit;
+            } else if (quantityToAdd !== null) {
+              if (!unitsAreCompatible(existing.unit, unitToAdd)) {
+                throw new Error("Las unidades no son compatibles.");
+              }
 
-          if (existingBase.unit !== addedBase.unit) {
-            setActionMessage(
-              `${item.name} ya está en el almacén con otra unidad. No he cambiado las existencias.`
-            );
-            return;
+              const existingBase = convertToBaseQuantity(
+                Number(existing.quantity),
+                existing.unit
+              );
+
+              const addedBase = convertToBaseQuantity(
+                quantityToAdd,
+                unitToAdd
+              );
+
+              if (existingBase.unit !== addedBase.unit) {
+                throw new Error("Las unidades no son compatibles.");
+              }
+
+              mergedQuantity = convertFromBaseQuantity(
+                existingBase.quantity + addedBase.quantity,
+                existing.unit
+              );
+            }
+
+            const { error: updateError } = await supabase
+              .from("pantry")
+              .update({
+                quantity: mergedQuantity,
+                unit: mergedUnit,
+              })
+              .eq("id", existing.id)
+              .eq("user_id", user.id);
+
+            if (updateError) throw updateError;
+          } else {
+            const { error: insertError } = await supabase
+              .from("pantry")
+              .insert({
+                user_id: user.id,
+                ingredient_id: item.ingredientId,
+                quantity: quantityToAdd,
+                unit: unitToAdd,
+                location: destination,
+              });
+
+            if (insertError) throw insertError;
           }
 
-          const totalBase = existingBase.quantity + addedBase.quantity;
-          mergedQuantity = convertFromBaseQuantity(
-            totalBase,
-            existing.unit
-          );
-        }
+          if (item.source === "manual") {
+            const { error: deleteError } = await supabase
+              .from("shopping_list")
+              .delete()
+              .eq("id", shoppingId)
+              .eq("user_id", user.id);
 
-        const confirmed = window.confirm(
-          `${item.name} ya está en tu almacén. ¿Quieres sumar la cantidad comprada a las existencias actuales?`
+            if (deleteError) throw deleteError;
+          } else {
+            const { error: updateShoppingError } = await supabase
+              .from("shopping_list")
+              .update({ checked: false })
+              .eq("id", shoppingId)
+              .eq("user_id", user.id);
+
+            if (updateShoppingError) throw updateShoppingError;
+          }
+
+          successfulIds.push(item.id);
+        } catch (error) {
+          console.error(
+            `Error pasando ${item.ingredientName} al almacén:`,
+            error
+          );
+          failedNames.push(item.ingredientName);
+        }
+      }
+
+      if (successfulIds.length > 0) {
+        setShoppingItems((current) =>
+          current.filter((item) => !successfulIds.includes(item.id))
         );
 
-        if (!confirmed) return;
+        setCheckedItems((current) =>
+          current.filter((id) => !successfulIds.includes(id))
+        );
 
-        const { error: updateError } = await supabase
-          .from("pantry")
-          .update({ quantity: mergedQuantity, unit: mergedUnit })
-          .eq("id", existing.id)
-          .eq("user_id", user.id);
+        await loadData();
+      }
 
-        if (updateError) throw updateError;
+      if (failedNames.length === 0) {
+        setActionMessage(
+          `${successfulIds.length} ${
+            successfulIds.length === 1
+              ? "producto añadido"
+              : "productos añadidos"
+          } al almacén en sus ubicaciones correspondientes.`
+        );
       } else {
-        const { error: insertError } = await supabase.from("pantry").insert({
-          user_id: user.id,
-          ingredient_id: item.ingredientId,
-          quantity: quantityToAdd,
-          unit: unitToAdd,
-        });
-
-        if (insertError) throw insertError;
-      }
-
-      // Se conserva en la lista y se marca como comprado.
-      const shoppingId = Number(item.id);
-
-      if (Number.isFinite(shoppingId)) {
-        const { error: shoppingUpdateError } = await supabase
-          .from("shopping_list")
-          .update({ checked: true })
-          .eq("id", shoppingId)
-          .eq("user_id", user.id);
-
-        if (shoppingUpdateError) throw shoppingUpdateError;
-      }
-
-      setCheckedItems((current) =>
-        current.includes(item.id) ? current : [...current, item.id]
-      );
-
-      setPantryItems((current) => {
-        const found = current.find(
-          (entry) => entry.ingredientId === item.ingredientId
+        setActionMessage(
+          `${successfulIds.length} añadidos al almacén. No se han podido añadir: ${failedNames.join(
+            ", "
+          )}. Siguen en tu lista.`
         );
-
-        if (!found) {
-          return [
-            ...current,
-            {
-              id: `new-${item.ingredientId}`,
-              ingredientId: item.ingredientId,
-              name: item.ingredientName,
-              quantity: quantityToAdd,
-              unit: unitToAdd,
-            },
-          ];
-        }
-
-        if (found.quantity === null) {
-          return current.map((entry) =>
-            entry.ingredientId === item.ingredientId
-              ? { ...entry, quantity: quantityToAdd, unit: unitToAdd }
-              : entry
-          );
-        }
-
-        if (
-          quantityToAdd !== null &&
-          unitsAreCompatible(found.unit, unitToAdd)
-        ) {
-          const existingBase = convertToBaseQuantity(
-            found.quantity,
-            found.unit
-          );
-          const addedBase = convertToBaseQuantity(
-            quantityToAdd,
-            unitToAdd
-          );
-
-          if (existingBase.unit === addedBase.unit) {
-            return current.map((entry) =>
-              entry.ingredientId === item.ingredientId
-                ? {
-                    ...entry,
-                    quantity: convertFromBaseQuantity(
-                      existingBase.quantity + addedBase.quantity,
-                      found.unit
-                    ),
-                  }
-                : entry
-            );
-          }
-        }
-
-        return current;
-      });
-
-      setActionMessage(
-        `${item.ingredientName} se ha añadido al almacén y sigue en tu lista como comprado.`
-      );
+      }
     } catch (error) {
-      console.error("Error añadiendo producto al almacén:", error);
+      console.error("Error actualizando el almacén:", error);
       setActionMessage(
-        "No se ha podido actualizar el almacén. Inténtalo de nuevo."
+        "No se ha podido completar la operación. Inténtalo de nuevo."
       );
     } finally {
-      setPantryActionId(null);
+      setAddingPurchased(false);
     }
   }
 
@@ -1255,6 +1362,8 @@ export default function ShoppingPage() {
           : entry
       )
     );
+
+    setContextMenuItem(null);
   }
 
   async function addManualItem() {
@@ -1315,12 +1424,16 @@ export default function ShoppingPage() {
 
       if (error) {
         console.error("Error añadiendo producto manual:", error);
-        setErrorMessage("No se ha podido añadir el producto. Inténtalo de nuevo.");
+        setErrorMessage(
+          "No se ha podido añadir el producto. Inténtalo de nuevo."
+        );
         return;
       }
 
       if (!inserted) {
-        setErrorMessage("No se ha recibido confirmación del producto añadido.");
+        setErrorMessage(
+          "No se ha recibido confirmación del producto añadido."
+        );
         return;
       }
 
@@ -1333,7 +1446,9 @@ export default function ShoppingPage() {
       await loadData();
     } catch (error) {
       console.error("Error añadiendo producto manual:", error);
-      setErrorMessage("No se ha podido añadir el producto. Inténtalo de nuevo.");
+      setErrorMessage(
+        "No se ha podido añadir el producto. Inténtalo de nuevo."
+      );
     } finally {
       setAddingManual(false);
     }
@@ -1361,7 +1476,11 @@ export default function ShoppingPage() {
       current.filter((shoppingItem) => shoppingItem.id !== id)
     );
 
-    setCheckedItems((current) => current.filter((checkedId) => checkedId !== id));
+    setCheckedItems((current) =>
+      current.filter((checkedId) => checkedId !== id)
+    );
+
+    setContextMenuItem(null);
   }
 
   const recipeItems = useMemo(
@@ -1374,8 +1493,6 @@ export default function ShoppingPage() {
     [shoppingItems]
   );
 
-  // Los ingredientes de recetas que ya están en casa solo se ocultan
-  // si aún no se han marcado como comprados.
   const displayedItems =
     activeList === "recipe"
       ? recipeItems.filter(
@@ -1387,16 +1504,307 @@ export default function ShoppingPage() {
     checkedItems.includes(item.id)
   ).length;
 
-  function getCategoryItems(category: string) {
-    return displayedItems.filter((item) => item.category === category);
+  const pendingItems = displayedItems.filter(
+    (item) => !checkedItems.includes(item.id)
+  );
+
+  const purchasedItems = displayedItems.filter((item) =>
+    checkedItems.includes(item.id)
+  );
+
+  function getCategoriesForItems(items: ShoppingItem[]) {
+    return Array.from(
+      new Set([
+        ...categories.map((category) => category.name),
+        ...items.map((item) => item.category),
+      ])
+    ).filter((category) =>
+      items.some((item) => item.category === category)
+    );
   }
 
-  const categoriesWithItems = Array.from(
-    new Set([
-      ...categories.map((category) => category.name),
-      ...displayedItems.map((item) => item.category),
-    ])
-  ).filter((category) => getCategoryItems(category).length > 0);
+  function renderShoppingGroups(items: ShoppingItem[]) {
+    const categoryNames = getCategoriesForItems(items);
+
+    return (
+      <div className="space-y-3">
+        {categoryNames.map((category) => {
+          const categoryItems = items.filter(
+            (item) => item.category === category
+          );
+
+          return (
+            <section
+              key={category}
+              className="rounded-3xl bg-white p-5 shadow-sm"
+            >
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h3 className="text-base font-semibold text-[#30352C]">
+                  {category}
+                </h3>
+                <span className="rounded-full bg-[#F1F2ED] px-2.5 py-1 text-xs font-medium text-[#737D68]">
+                  {categoryItems.length}
+                </span>
+              </div>
+
+              <div className="divide-y divide-[#EEECE5]">
+                {categoryItems.map((item) => {
+                  const checked = checkedItems.includes(item.id);
+                  const isPressed = pressedItemId === item.id;
+                  const menuOpen = contextMenuItem?.id === item.id;
+
+                  const selectedDestination =
+                    pantryDestinations[String(item.ingredientId)] || "Nevera";
+
+                  return (
+                    <div
+                      key={item.id}
+                      className={`relative flex items-center gap-3 rounded-xl py-3.5 transition-colors first:pt-0 last:pb-0 ${
+                        isPressed ? "bg-[#26352D]/10" : ""
+                      }`}
+                      style={{ touchAction: "pan-y" }}
+                      onPointerDown={(
+                        event: ReactPointerEvent<HTMLDivElement>
+                      ) => {
+                        if (
+                          event.pointerType === "mouse" &&
+                          event.button !== 0
+                        ) {
+                          return;
+                        }
+
+                        const target = event.target as HTMLElement;
+
+                        if (
+                          target.closest(
+                            "button, select, input, textarea, a"
+                          )
+                        ) {
+                          return;
+                        }
+
+                        if (pressTimerRef.current) {
+                          clearTimeout(pressTimerRef.current);
+                        }
+
+                        pressStartRef.current = {
+                          x: event.clientX,
+                          y: event.clientY,
+                        };
+
+                        setPressedItemId(item.id);
+
+                        pressTimerRef.current = setTimeout(() => {
+                          setContextMenuItem(item);
+                          setPressedItemId(null);
+                          pressTimerRef.current = null;
+                        }, 550);
+                      }}
+                      onPointerMove={(
+                        event: ReactPointerEvent<HTMLDivElement>
+                      ) => {
+                        if (
+                          !pressStartRef.current ||
+                          !pressTimerRef.current
+                        ) {
+                          return;
+                        }
+
+                        const distance = Math.sqrt(
+                          Math.pow(
+                            event.clientX - pressStartRef.current.x,
+                            2
+                          ) +
+                            Math.pow(
+                              event.clientY - pressStartRef.current.y,
+                              2
+                            )
+                        );
+
+                        if (distance > 10) {
+                          clearTimeout(pressTimerRef.current);
+                          pressTimerRef.current = null;
+                          pressStartRef.current = null;
+                          setPressedItemId(null);
+                        }
+                      }}
+                      onPointerUp={() => {
+                        if (pressTimerRef.current) {
+                          clearTimeout(pressTimerRef.current);
+                          pressTimerRef.current = null;
+                        }
+
+                        pressStartRef.current = null;
+                        setPressedItemId(null);
+                      }}
+                      onPointerCancel={() => {
+                        if (pressTimerRef.current) {
+                          clearTimeout(pressTimerRef.current);
+                          pressTimerRef.current = null;
+                        }
+
+                        pressStartRef.current = null;
+                        setPressedItemId(null);
+                      }}
+                      onPointerLeave={() => {
+                        if (pressTimerRef.current) {
+                          clearTimeout(pressTimerRef.current);
+                          pressTimerRef.current = null;
+                        }
+
+                        pressStartRef.current = null;
+                        setPressedItemId(null);
+                      }}
+                      onContextMenu={(event) => event.preventDefault()}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => void toggleItem(item.id)}
+                        aria-label={
+                          checked
+                            ? "Marcar como pendiente"
+                            : "Marcar como comprado"
+                        }
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition ${
+                          checked
+                            ? "border-[#879078] bg-[#879078] text-white"
+                            : "border-[#C8C9C0] bg-white hover:border-[#879078]"
+                        }`}
+                      >
+                        {checked && (
+                          <span className="text-xs font-bold">✓</span>
+                        )}
+                      </button>
+
+                      <div className="min-w-0 flex-1">
+                        <div
+                          className={`text-sm font-medium transition ${
+                            checked
+                              ? "text-[#A0A399] line-through"
+                              : "text-[#30352C]"
+                          }`}
+                        >
+                          {item.name}
+                        </div>
+
+                        {item.source === "recipe" &&
+                          item.recipes.length > 0 && (
+                            <p className="mt-1 text-xs text-[#9A9E94]">
+                              {item.recipes.join(" · ")}
+                            </p>
+                          )}
+
+                        {item.owned && (
+                          <p className="mt-1 text-xs font-medium text-[#879078]">
+                            ✓ Ya lo tienes en casa
+                          </p>
+                        )}
+                      </div>
+
+                      {checked && (
+                        <div className="w-[116px] shrink-0 sm:w-36">
+                          <label className="sr-only">
+                            Ubicación de {item.ingredientName}
+                          </label>
+                          <select
+                            value={selectedDestination}
+                            onChange={(event) =>
+                              changePantryDestination(
+                                item.ingredientId,
+                                event.target.value as PantryLocation
+                              )
+                            }
+                            disabled={addingPurchased}
+                            aria-label={`Guardar ${item.ingredientName} en`}
+                            className="w-full rounded-xl border border-[#DDE5D8] bg-[#F7F8F4] px-2 py-2.5 text-xs font-medium text-[#52685A] outline-none focus:border-[#879078] disabled:opacity-60"
+                          >
+                            {PANTRY_LOCATIONS.map((location) => (
+                              <option key={location} value={location}>
+                                {location}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      {menuOpen && (
+                        <div
+                          ref={menuRef}
+                          className="absolute right-0 top-full z-30 mt-2 w-64 rounded-2xl border border-[#E8E5DC] bg-white p-3 shadow-xl"
+                        >
+                          <div className="mb-2 flex items-center justify-between">
+                            <p className="text-xs font-semibold text-[#52685A]">
+                              Opciones del ingrediente
+                            </p>
+
+                            <button
+                              type="button"
+                              onClick={() => setContextMenuItem(null)}
+                              aria-label="Cerrar opciones"
+                              className="rounded-full px-2 py-1 text-lg leading-none text-[#879078] hover:bg-[#F1F2ED]"
+                            >
+                              ×
+                            </button>
+                          </div>
+
+                          <label className="block text-xs text-[#788675]">
+                            Cambiar categoría
+                            <select
+                              value={
+                                categories.find(
+                                  (categoryOption) =>
+                                    categoryOption.name === item.category
+                                )?.id ?? ""
+                              }
+                              onChange={(event) =>
+                                void changeShoppingCategory(
+                                  item,
+                                  Number(event.target.value)
+                                )
+                              }
+                              aria-label={`Categoría de ${item.ingredientName}`}
+                              className="mt-2 w-full rounded-xl border border-[#E1DED5] bg-[#FBFAF7] px-3 py-2 text-sm text-[#52685A] outline-none focus:border-[#879078]"
+                            >
+                              {categories.map((categoryOption) => (
+                                <option
+                                  key={categoryOption.id}
+                                  value={categoryOption.id}
+                                >
+                                  {categoryOption.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+
+                          {item.source === "manual" && (
+                            <button
+                              type="button"
+                              onClick={() => void removeManualItem(item.id)}
+                              className="mt-3 w-full rounded-xl bg-[#F5EFEC] px-3 py-2 text-left text-xs font-semibold text-[#9B6F67] transition hover:bg-[#EEE4E0]"
+                            >
+                              Eliminar ingrediente
+                            </button>
+                          )}
+
+                          {item.source === "recipe" && (
+                            <p className="mt-3 text-xs leading-5 text-[#92958B]">
+                              Este ingrediente procede de una receta. Puedes
+                              cambiar su categoría, pero no eliminarlo desde
+                              aquí.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -1443,14 +1851,17 @@ export default function ShoppingPage() {
           </div>
         </div>
 
-
-
-        <nav aria-label="Apartados de compra" className="mb-5 grid grid-cols-3 gap-1 rounded-2xl bg-white p-1.5 shadow-sm">
-          {([
-            { id: "lista", label: "Lista", icon: "🛒" },
-            { id: "almacen", label: "Almacén", icon: "🥬" },
-            { id: "ingredientes", label: "Ingredientes", icon: "🏷️" },
-          ] as const).map((tab) => (
+        <nav
+          aria-label="Apartados de compra"
+          className="mb-5 grid grid-cols-3 gap-1 rounded-2xl bg-white p-1.5 shadow-sm"
+        >
+          {(
+            [
+              { id: "lista", label: "Lista", icon: "🛒" },
+              { id: "almacen", label: "Almacén", icon: "🥬" },
+              { id: "ingredientes", label: "Ingredientes", icon: "🏷️" },
+            ] as const
+          ).map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -1462,7 +1873,9 @@ export default function ShoppingPage() {
                   : "text-[#687260] hover:bg-[#F1F2ED]"
               }`}
             >
-              <span className="mr-1 sm:mr-2" aria-hidden="true">{tab.icon}</span>
+              <span className="mr-1 sm:mr-2" aria-hidden="true">
+                {tab.icon}
+              </span>
               {tab.label}
             </button>
           ))}
@@ -1470,366 +1883,292 @@ export default function ShoppingPage() {
 
         {activeSection === "lista" && (
           <>
-        <section className="mb-6 rounded-3xl bg-white p-2 shadow-sm">
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveList("manual");
-                setErrorMessage("");
-              }}
-              className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${
-                activeList === "manual"
-                  ? "bg-[#879078] text-white"
-                  : "text-[#59614F] hover:bg-[#F6F3EC]"
-              }`}
-            >
-              <span className="mr-2">✏️</span>
-              Mi lista
-              {manualItems.length > 0 && (
-                <span
-                  className={`ml-2 rounded-full px-2 py-0.5 text-xs ${
+            <section className="mb-6 rounded-3xl bg-white p-2 shadow-sm">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveList("manual");
+                    setErrorMessage("");
+                  }}
+                  className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${
                     activeList === "manual"
-                      ? "bg-white/20 text-white"
-                      : "bg-[#EAE8DF] text-[#687260]"
+                      ? "bg-[#879078] text-white"
+                      : "text-[#59614F] hover:bg-[#F6F3EC]"
                   }`}
                 >
-                  {manualItems.length}
-                </span>
-              )}
-            </button>
+                  <span className="mr-2">✏️</span>
+                  Mi lista
+                  {manualItems.length > 0 && (
+                    <span
+                      className={`ml-2 rounded-full px-2 py-0.5 text-xs ${
+                        activeList === "manual"
+                          ? "bg-white/20 text-white"
+                          : "bg-[#EAE8DF] text-[#687260]"
+                      }`}
+                    >
+                      {manualItems.length}
+                    </span>
+                  )}
+                </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setActiveList("recipe");
-                setIsAddFormOpen(false);
-                setErrorMessage("");
-              }}
-              className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${
-                activeList === "recipe"
-                  ? "bg-[#879078] text-white"
-                  : "text-[#59614F] hover:bg-[#F6F3EC]"
-              }`}
-            >
-              <span className="mr-2">🍲</span>
-              Recetas
-              {recipeItems.length > 0 && (
-                <span
-                  className={`ml-2 rounded-full px-2 py-0.5 text-xs ${
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveList("recipe");
+                    setIsAddFormOpen(false);
+                    setErrorMessage("");
+                  }}
+                  className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${
                     activeList === "recipe"
-                      ? "bg-white/20 text-white"
-                      : "bg-[#EAE8DF] text-[#687260]"
+                      ? "bg-[#879078] text-white"
+                      : "text-[#59614F] hover:bg-[#F6F3EC]"
                   }`}
                 >
-                  {recipeItems.length}
-                </span>
-              )}
-            </button>
-          </div>
-        </section>
+                  <span className="mr-2">🍲</span>
+                  Recetas
+                  {recipeItems.length > 0 && (
+                    <span
+                      className={`ml-2 rounded-full px-2 py-0.5 text-xs ${
+                        activeList === "recipe"
+                          ? "bg-white/20 text-white"
+                          : "bg-[#EAE8DF] text-[#687260]"
+                      }`}
+                    >
+                      {recipeItems.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+            </section>
 
-        {actionMessage && (
-          <p
-            role="status"
-            className="mb-4 rounded-2xl bg-[#E7EDE3] px-4 py-3 text-sm text-[#52685A]"
-          >
-            {actionMessage}
-          </p>
-        )}
-
-        {activeList === "manual" && (
-          <section className="mt-4 mb-6 sm:mt-6">
-            {!isAddFormOpen ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setErrorMessage("");
-                  setIsAddFormOpen(true);
-                }}
-                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-[#C9D3C4] bg-white px-4 py-4 text-sm font-semibold text-[#52685A] shadow-sm transition hover:bg-[#E7EDE3] active:scale-[0.99]"
+            {actionMessage && (
+              <p
+                role="status"
+                className="mb-4 rounded-2xl bg-[#E7EDE3] px-4 py-3 text-sm text-[#52685A]"
               >
-                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#E7EDE3] text-xl leading-none">
-                  +
-                </span>
-                Añadir producto
-              </button>
-            ) : (
-              <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-5">
-                <div className="mb-4 flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-base font-semibold text-[#30352C]">
-                      Añadir a la lista
-                    </h2>
-                    <p className="mt-1 text-sm leading-5 text-[#879078]">
-                      Añade productos que quieras comprar, aunque no estén
-                      relacionados con ninguna receta.
-                    </p>
-                  </div>
+                {actionMessage}
+              </p>
+            )}
 
+            {activeList === "manual" && (
+              <section className="mt-4 mb-6 sm:mt-6">
+                {!isAddFormOpen ? (
                   <button
                     type="button"
                     onClick={() => {
-                      setIsAddFormOpen(false);
-                      setManualName("");
-                      setManualQuantity("");
-                      setManualUnit("");
                       setErrorMessage("");
+                      setIsAddFormOpen(true);
                     }}
-                    aria-label="Cerrar formulario"
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F1F2ED] text-lg text-[#59614F] transition hover:bg-[#E7EDE3]"
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-[#C9D3C4] bg-white px-4 py-4 text-sm font-semibold text-[#52685A] shadow-sm transition hover:bg-[#E7EDE3] active:scale-[0.99]"
                   >
-                    ×
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#E7EDE3] text-xl leading-none">
+                      +
+                    </span>
+                    Añadir producto
                   </button>
+                ) : (
+                  <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-5">
+                    <div className="mb-4 flex items-start justify-between gap-3">
+                      <div>
+                        <h2 className="text-base font-semibold text-[#30352C]">
+                          Añadir a la lista
+                        </h2>
+                        <p className="mt-1 text-sm leading-5 text-[#879078]">
+                          Añade productos que quieras comprar, aunque no estén
+                          relacionados con ninguna receta.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddFormOpen(false);
+                          setManualName("");
+                          setManualQuantity("");
+                          setManualUnit("");
+                          setErrorMessage("");
+                        }}
+                        aria-label="Cerrar formulario"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F1F2ED] text-lg text-[#59614F] transition hover:bg-[#E7EDE3]"
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void addManualItem();
+                      }}
+                      className="space-y-3"
+                    >
+                      <IngredientAutocomplete
+                        value={manualName}
+                        onChange={setManualName}
+                        placeholder="Nombre del producto (ej. Café)"
+                        className="w-full rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-4 py-3 text-base text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
+                      />
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={manualQuantity}
+                          onChange={(event) =>
+                            setManualQuantity(event.target.value)
+                          }
+                          placeholder="Cantidad"
+                          className="min-w-0 rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-3 py-3 text-base text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
+                        />
+
+                        <input
+                          type="text"
+                          value={manualUnit}
+                          onChange={(event) =>
+                            setManualUnit(event.target.value)
+                          }
+                          placeholder="Unidad (kg, ud...)"
+                          className="min-w-0 rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-3 py-3 text-base text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={addingManual || !manualName.trim()}
+                        className="w-full rounded-2xl bg-[#879078] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68] active:bg-[#687260] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {addingManual ? "Añadiendo…" : "Añadir a mi lista"}
+                      </button>
+                    </form>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {displayedItems.length === 0 ? (
+              <section className="rounded-3xl bg-white px-6 py-12 text-center shadow-sm">
+                <div className="text-5xl">
+                  {activeList === "recipe" ? "🍲" : "📝"}
                 </div>
 
-                <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void addManualItem();
-                  }}
-                  className="space-y-3"
-                >
-                  <IngredientAutocomplete
-                    value={manualName}
-                    onChange={setManualName}
-                    placeholder="Nombre del producto (ej. Café)"
-                    className="w-full rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-4 py-3 text-base text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
-                  />
+                <h2 className="mt-4 text-xl font-semibold text-[#30352C]">
+                  {activeList === "recipe"
+                    ? "No hay nada que comprar todavía"
+                    : "Tu lista manual está vacía"}
+                </h2>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={manualQuantity}
-                      onChange={(event) =>
-                        setManualQuantity(event.target.value)
-                      }
-                      placeholder="Cantidad"
-                      className="min-w-0 rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-3 py-3 text-base text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
-                    />
+                <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#879078]">
+                  {activeList === "recipe"
+                    ? "Añade recetas al planificador y sus ingredientes aparecerán aquí automáticamente."
+                    : "Añade productos que quieras comprar aunque no formen parte de ninguna receta."}
+                </p>
 
-                    <input
-                      type="text"
-                      value={manualUnit}
-                      onChange={(event) => setManualUnit(event.target.value)}
-                      placeholder="Unidad (kg, ud...)"
-                      className="min-w-0 rounded-2xl border border-[#E1DED5] bg-[#F9F8F4] px-3 py-3 text-base text-[#30352C] outline-none transition placeholder:text-[#A6A99E] focus:border-[#879078] focus:ring-2 focus:ring-[#DDE2D8]"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={addingManual || !manualName.trim()}
-                    className="w-full rounded-2xl bg-[#879078] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68] active:bg-[#687260] disabled:cursor-not-allowed disabled:opacity-50"
+                {activeList === "recipe" ? (
+                  <Link
+                    href="/planificador"
+                    className="mt-6 inline-flex rounded-2xl bg-[#879078] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68] active:bg-[#687260]"
                   >
-                    {addingManual ? "Añadiendo…" : "Añadir a mi lista"}
+                    Ir al planificador
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setErrorMessage("");
+                      setIsAddFormOpen(true);
+                    }}
+                    className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-[#879078] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68] active:bg-[#687260]"
+                  >
+                    <span className="text-lg">+</span>
+                    Añadir producto
                   </button>
-                </form>
+                )}
+              </section>
+            ) : (
+              <div className="space-y-6">
+                {pendingItems.length > 0 && (
+                  <section>
+                    <div className="mb-3 flex items-center justify-between px-1">
+                      <h2 className="text-sm font-semibold text-[#52685A]">
+                        Por comprar
+                      </h2>
+                      <span className="text-xs text-[#879078]">
+                        {pendingItems.length}
+                      </span>
+                    </div>
+
+                    {renderShoppingGroups(pendingItems)}
+                  </section>
+                )}
+
+                {purchasedItems.length > 0 && (
+                  <section>
+                    <div className="mb-3 flex items-center justify-between px-1">
+                      <h2 className="text-sm font-semibold text-[#879078]">
+                        Comprados
+                      </h2>
+                      <span className="text-xs text-[#879078]">
+                        {purchasedItems.length}
+                      </span>
+                    </div>
+
+                    {renderShoppingGroups(purchasedItems)}
+
+                    <div className="mt-4 rounded-3xl border border-[#DDE5D8] bg-white p-4 shadow-sm">
+                      <p className="text-sm font-semibold text-[#52685A]">
+                        Guarda tu compra en el almacén
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-[#879078]">
+                        Elige dónde guardar cada producto. Recordaremos la
+                        ubicación para la próxima vez. Los productos añadidos
+                        correctamente desaparecerán de esta lista.
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() => void addPurchasedItemsToPantry()}
+                        disabled={addingPurchased}
+                        className="mt-3 w-full rounded-2xl bg-[#52685A] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#435749] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {addingPurchased
+                          ? "Actualizando almacén…"
+                          : `Añadir ${purchasedItems.length} ${
+                              purchasedItems.length === 1
+                                ? "producto"
+                                : "productos"
+                            } al almacén`}
+                      </button>
+                    </div>
+                  </section>
+                )}
               </div>
             )}
-          </section>
-        )}
 
-        {displayedItems.length === 0 ? (
-          <section className="rounded-3xl bg-white px-6 py-12 text-center shadow-sm">
-            <div className="text-5xl">
-              {activeList === "recipe" ? "🍲" : "📝"}
-            </div>
-
-            <h2 className="mt-4 text-xl font-semibold text-[#30352C]">
-              {activeList === "recipe"
-                ? "No hay nada que comprar todavía"
-                : "Tu lista manual está vacía"}
-            </h2>
-
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#879078]">
-              {activeList === "recipe"
-                ? "Añade recetas al planificador y sus ingredientes aparecerán aquí automáticamente."
-                : "Añade productos que quieras comprar aunque no formen parte de ninguna receta."}
-            </p>
-
-            {activeList === "recipe" ? (
-              <Link
-                href="/planificador"
-                className="mt-6 inline-flex rounded-2xl bg-[#879078] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68] active:bg-[#687260]"
+            {errorMessage && (
+              <section
+                role="alert"
+                className="mb-6 rounded-3xl border border-[#E5D8D3] bg-[#FBF5F2] px-5 py-4"
               >
-                Ir al planificador
-              </Link>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setErrorMessage("");
-                  setIsAddFormOpen(true);
-                }}
-                className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-[#879078] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#737D68] active:bg-[#687260]"
-              >
-                <span className="text-lg">+</span>
-                Añadir producto
-              </button>
+                <p className="text-sm text-[#8B625A]">{errorMessage}</p>
+              </section>
             )}
-          </section>
-        ) : (
-          <div className="space-y-3">
-            {categoriesWithItems.map((category) => {
-              const items = getCategoryItems(category);
 
-              return (
-                <section
-                  key={category}
-                  className="rounded-3xl bg-white p-5 shadow-sm"
-                >
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <h2 className="text-base font-semibold text-[#30352C]">
-                      {category}
-                    </h2>
-                    <span className="rounded-full bg-[#F1F2ED] px-2.5 py-1 text-xs font-medium text-[#737D68]">
-                      {items.length}
-                    </span>
-                  </div>
+            <details className="mt-6 rounded-2xl px-1 py-2">
+              <summary className="cursor-pointer list-none text-xs font-medium text-[#92958B] transition hover:text-[#52685A]">
+                ⚙️ Organizar categorías
+              </summary>
 
-                  <div className="divide-y divide-[#EEECE5]">
-                    {items.map((item) => {
-                      const checked = checkedItems.includes(item.id);
-
-                      return (
-                        <div
-                          key={item.id}
-                          className="flex items-center gap-3 py-3.5 first:pt-0 last:pb-0"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => void toggleItem(item.id)}
-                            aria-label={
-                              checked
-                                ? "Marcar como pendiente"
-                                : "Marcar como comprado"
-                            }
-                            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition ${
-                              checked
-                                ? "border-[#879078] bg-[#879078] text-white"
-                                : "border-[#C8C9C0] bg-white hover:border-[#879078]"
-                            }`}
-                          >
-                            {checked && (
-                              <span className="text-xs font-bold">✓</span>
-                            )}
-                          </button>
-
-                          <div className="min-w-0 flex-1">
-                            <div
-                              className={`text-sm font-medium transition ${
-                                checked
-                                  ? "text-[#A0A399] line-through"
-                                  : "text-[#30352C]"
-                              }`}
-                            >
-                              {item.name}
-                            </div>
-
-                            {item.source === "recipe" &&
-                              item.recipes.length > 0 && (
-                                <p className="mt-1 text-xs text-[#9A9E94]">
-                                  {item.recipes.join(" · ")}
-                                </p>
-                              )}
-
-                            <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#788675]">
-                              <span>Categoría</span>
-                              <select
-                                value={
-                                  categories.find(
-                                    (categoryOption) =>
-                                      categoryOption.name === item.category
-                                  )?.id ?? ""
-                                }
-                                onChange={(event) =>
-                                  void changeShoppingCategory(
-                                    item,
-                                    Number(event.target.value)
-                                  )
-                                }
-                                aria-label={`Categoría de ${item.ingredientName}`}
-                                className="max-w-[190px] rounded-xl border border-[#E1DED5] bg-[#FBFAF7] px-2 py-1.5 text-base text-[#52685A] outline-none focus:border-[#879078] sm:text-xs"
-                              >
-                                {categories.map((categoryOption) => (
-                                  <option
-                                    key={categoryOption.id}
-                                    value={categoryOption.id}
-                                  >
-                                    {categoryOption.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-
-                            {item.owned && (
-                              <p className="mt-1 text-xs font-medium text-[#879078]">
-                                ✓ Ya lo tienes en casa
-                              </p>
-                            )}
-
-                            {checked && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void addPurchasedItemToPantry(item)
-                                }
-                                disabled={pantryActionId === item.id}
-                                className="mt-2 rounded-xl bg-[#E7EDE3] px-3 py-2 text-xs font-semibold text-[#52685A] transition hover:bg-[#DDE8DF] disabled:opacity-50"
-                              >
-                                {pantryActionId === item.id
-                                  ? "Guardando…"
-                                  : "Añadir al almacén"}
-                              </button>
-                            )}
-                          </div>
-
-                          {item.source === "manual" && (
-                            <button
-                              type="button"
-                              onClick={() => void removeManualItem(item.id)}
-                              className="shrink-0 rounded-xl px-3 py-2 text-xs font-medium text-[#9B6F67] transition hover:bg-[#F5EFEC] active:bg-[#EEE4E0]"
-                            >
-                              Eliminar
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              );
-            })}
-          </div>
-        )}
-
-        {errorMessage && (
-          <section
-            role="alert"
-            className="mb-6 rounded-3xl border border-[#E5D8D3] bg-[#FBF5F2] px-5 py-4"
-          >
-            <p className="text-sm text-[#8B625A]">{errorMessage}</p>
-          </section>
-        )}
-
-        <details className="mt-6 rounded-2xl px-1 py-2">
-          <summary className="cursor-pointer list-none text-xs font-medium text-[#92958B] transition hover:text-[#52685A]">
-            ⚙️ Organizar categorías
-          </summary>
-
-          <div className="mt-3">
-            <ShoppingCategoryManager
-              categories={categories}
-              onCreate={createCategory}
-              onRename={renameCategory}
-              onDelete={deleteCategory}
-              onReorder={reorderCategories}
-            />
-          </div>
-        </details>
-
+              <div className="mt-3">
+                <ShoppingCategoryManager
+                  categories={categories}
+                  onCreate={createCategory}
+                  onRename={renameCategory}
+                  onDelete={deleteCategory}
+                  onReorder={reorderCategories}
+                />
+              </div>
+            </details>
           </>
         )}
 
